@@ -1,9 +1,9 @@
-# Default values for laa-manage-a-providers-data.
+# Default values for laa-test-a-provider-data-ui.
 # These can be overwritten by values defined in environment specific values files.
 replicaCount: 1
 
 image:
-  repository: laa-manage-a-providers-data
+  repository: laa-test-a-provider-data-ui
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: latest

@@ -3,7 +3,7 @@ replicaCount: 4
 
 ingress:
   enabled: true
-  host: "laa-manage-a-providers-data.cloud-platform.service.justice.gov.uk"
+  host: "laa-test-a-provider-data-ui.cloud-platform.service.justice.gov.uk"
 
 whitelist:
   enabled: true

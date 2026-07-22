@@ -64,9 +64,9 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           REGISTRY: ${{ secrets.ECR_REGISTRY_URL }}
           REPOSITORY: ${{ inputs.ECR_REPOSITORY }}
-          HELM_DIR: "helm_deploy/laa-manage-a-providers-data"
+          HELM_DIR: "helm_deploy/laa-test-a-provider-data-ui"
           SHARED_IP_RANGES_LAA: ${{ env.SHARED_IP_RANGES_LAA }}
-          DEV_HOST: "manage-a-providers-data.cloud-platform.service.justice.gov.uk"
+          DEV_HOST: "test-a-provider-data-ui.cloud-platform.service.justice.gov.uk"
           # head_ref is set if the workflow was triggered by a PR, ref_name is used if the workflow was trigged by a push.
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
         run: |

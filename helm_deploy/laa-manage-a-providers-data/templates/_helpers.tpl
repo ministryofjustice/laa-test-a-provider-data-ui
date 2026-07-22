@@ -1,7 +1,7 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "laa-manage-a-providers-data.name" -}}
+{{- define "laa-test-a-provider-data-ui.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
@@ -10,7 +10,7 @@ Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
 */}}
-{{- define "laa-manage-a-providers-data.fullname" -}}
+{{- define "laa-test-a-provider-data-ui.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -23,23 +23,23 @@ If release name contains chart name it will be used as a full name.
 {{- end }}
 {{- end }}
 
-{{- define "laa-manage-a-providers-data.whitelist" -}}
+{{- define "laa-test-a-provider-data-ui.whitelist" -}}
 {{ join "," (list .Values.sharedIPRangesLAA .Values.pingdomIPs)}}
 {{- end -}}
 
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "laa-manage-a-providers-data.chart" -}}
+{{- define "laa-test-a-provider-data-ui.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels
 */}}
-{{- define "laa-manage-a-providers-data.labels" -}}
-helm.sh/chart: {{ include "laa-manage-a-providers-data.chart" . }}
-{{ include "laa-manage-a-providers-data.selectorLabels" . }}
+{{- define "laa-test-a-provider-data-ui.labels" -}}
+helm.sh/chart: {{ include "laa-test-a-provider-data-ui.chart" . }}
+{{ include "laa-test-a-provider-data-ui.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -49,23 +49,23 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "laa-manage-a-providers-data.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "laa-manage-a-providers-data.name" . }}
+{{- define "laa-test-a-provider-data-ui.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "laa-test-a-provider-data-ui.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Create the name of the service account to use
 */}}
-{{- define "laa-manage-a-providers-data.serviceAccountName" -}}
+{{- define "laa-test-a-provider-data-ui.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "laa-manage-a-providers-data.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "laa-test-a-provider-data-ui.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
 
-{{- define "laa-manage-a-providers-data.app.vars" -}}
+{{- define "laa-test-a-provider-data-ui.app.vars" -}}
 - name: MAPD_ENVIRONMENT
   value: {{.Values.environment}}
 {{ range $name, $data := .Values.envVars }}

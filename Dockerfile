@@ -29,8 +29,8 @@ ENV PYTHONUNBUFFERED=1
 RUN adduser --disabled-password app -u 1000 && \
     cp /usr/share/zoneinfo/Europe/London /etc/localtime
 
-RUN mkdir /home/app/manage-a-providers-data
-WORKDIR /home/app/manage-a-providers-data
+RUN mkdir /home/app/test-a-provider-data-ui
+WORKDIR /home/app/test-a-provider-data-ui
 
 COPY --from=node_build /home/node/app/static/dist/ app/static/dist/
 
