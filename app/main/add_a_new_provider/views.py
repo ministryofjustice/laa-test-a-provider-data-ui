@@ -250,7 +250,7 @@ class LiaisonManagerFormView(FullWidthBaseFormView):
             "email_address": form.data.get("email_address"),
             "telephone_number": form.data.get("telephone_number"),
             "website": form.data.get("website"),
-            "job_title": "Liaison manager",  # All contacts are liaison managers in MAPD
+            "job_title": "Liaison manager",  # All contacts are liaison managers in TEST_PDAUI
             "primary": "Y",  # We are adding a new head office so this will be the primary contact
         }
 
@@ -487,7 +487,7 @@ class AddAdvocateBarristersLiaisonManagerFormView(AddAdvocateBarristersCheckForm
             emailAddress=form.data.get("email_address"),
             telephoneNumber=form.data.get("telephone_number"),
             website=form.data.get("website"),
-            jobTitle="Liaison manager",  # All contacts are liaison managers in MAPD
+            jobTitle="Liaison manager",  # All contacts are liaison managers in TEST_PDAUI
             primary="Y",  # We are adding a new head office so this will be the primary contact
         )
         change_liaison_manager(contact=liaison_manager, firm_id=new_firm.firm_id)
