@@ -64,7 +64,9 @@ def test_assign_contract_manager_form_loads_correctly(page: Page):
 
     # Verify the hint text
     expect(
-        page.get_by_text("Contact mapd@justice.gov.uk if you cannot find the contract manager you want to assign.")
+        page.get_by_text(
+            "Contact TEST_PDAUI@justice.gov.uk if you cannot find the contract manager you want to assign."
+        )
     ).to_be_visible()
 
     # Verify form elements are present

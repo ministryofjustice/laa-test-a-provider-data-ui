@@ -1,5 +1,5 @@
 [project]
-name = "manage-a-providers-data"
+name = "test-a-provider-data-ui"
 requires-python = ">= 3.13"
 dynamic = ["dependencies", "optional-dependencies"]
 

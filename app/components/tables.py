@@ -515,8 +515,8 @@ class CheckDataTable(DataTable):
         field_id = f"{self.field_name}-select-all"
         html = f'''
         <div class="govuk-checkboxes__item govuk-checkboxes--small">
-            <input class="govuk-checkboxes__input mapd-select-all-checkbox" type="checkbox" name="{self.field_name}_select_all" 
-               id="{field_id}" value="1" mapd-select-all-checkbox="{self.field_name}">
+            <input class="govuk-checkboxes__input TEST_PDAUI-select-all-checkbox" type="checkbox" name="{self.field_name}_select_all"
+               id="{field_id}" value="1" TEST_PDAUI-select-all-checkbox="{self.field_name}">
             <label class="govuk-checkboxes__label govuk-!-padding-0" for="{field_id}">
                 <span class="govuk-visually-hidden">Select all</span>
             </label>

@@ -19,7 +19,7 @@ services:
       - ./app/static:/home/node/app/static
 
   web:
-    container_name: manage-a-providers-data
+    container_name: test-a-provider-data-ui
     build:
       context: .
       args:
@@ -40,8 +40,8 @@ services:
     ports:
       - "8020:8020"
     volumes:
-      - ./app:/home/app/manage-a-providers-data/app
-      - ./tests:/home/app/manage-a-providers-data/tests
+      - ./app:/home/app/test-a-provider-data-ui/app
+      - ./tests:/home/app/test-a-provider-data-ui/tests
     depends_on:
       - redis
 

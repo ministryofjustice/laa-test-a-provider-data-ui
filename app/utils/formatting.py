@@ -170,8 +170,8 @@ def format_uncapitalized(s: str) -> str:
     'VAT number'
 
     Handles acronyms inside strings
-    >>> format_uncapitalized('Primary MAPD account')
-    'primary MAPD account'
+    >>> format_uncapitalized('Primary TEST_PDAUI account')
+    'primary TEST_PDAUI account'
 
     Handles regular strings
     >>> format_uncapitalized('Correspondence address')

@@ -1,9 +1,9 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-    const selectAllElements = document.getElementsByClassName('mapd-select-all-checkbox');
+    const selectAllElements = document.getElementsByClassName('TEST_PDAUI-select-all-checkbox');
 
     for (const selectAll of selectAllElements) {
-        const childSelector = selectAll.getAttribute('mapd-select-all-checkbox');
+        const childSelector = selectAll.getAttribute('TEST_PDAUI-select-all-checkbox');
         const childCheckboxes = document.querySelectorAll(`input[name^="${childSelector}"]`);
 
         // When "select all" is toggled

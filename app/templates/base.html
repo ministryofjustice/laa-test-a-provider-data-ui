@@ -33,11 +33,19 @@
 {% endblock %}
 
 {% block beforeContent %}
+  <div class="govuk-warning-text" style="background-color: #ffdd00; border: 3px solid #0b0c0c; padding: 10px 15px; margin-bottom: 0;">
+    <span class="govuk-warning-text__icon" aria-hidden="true">!</span>
+    <strong class="govuk-warning-text__text">
+      <span class="govuk-visually-hidden">Warning</span>
+      This is a <strong>non-production developer test client</strong>. It is not intended for real data or operational use. Do not enter sensitive or live information.
+    </strong>
+  </div>
+
   {{ govukPhaseBanner({
     'tag': {
       'text': config['SERVICE_PHASE'],
     },
-    'html': 'This is a new service. Send your feedback to <a class="govuk-link" href="mailto:mapd@justice.gov.uk">mapd@justice.gov.uk</a> to help us improve it.'
+    'html': 'This is a new service. Send your feedback to <a class="govuk-link" href="mailto:TEST_PDAUI@justice.gov.uk">TEST_PDAUI@justice.gov.uk</a> to help us improve it.'
   }) }}
 {% endblock %}
 

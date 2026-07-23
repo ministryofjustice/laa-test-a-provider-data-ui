@@ -1,12 +1,15 @@
-## What does this pull request do?
+## What
 
-Required.
-[Link to story](https://dsdmoj.atlassian.net/browse/MAPD-XXX)
+[Link to story](https://dsdmoj.atlassian.net/browse/DSTEW-XXX)
 
-## Any other changes that would benefit highlighting?
-
-Intentionally left blank.
+Describe what you did and why.
 
 ## Checklist
 
-- [ ] Provided JIRA ticket number in the title, e.g. "LGA-152: Sample title"
+Before you ask people to review this PR:
+
+- [ ] Tests should be passing: `./gradlew test`
+- [ ] GitHub should not be reporting conflicts; you should have recently run `git rebase main`.
+- [ ] Avoid mixing whitespace changes with code changes in the same commit. These make diffs harder to read and conflicts more likely.
+- [ ] You should have looked at the diff against main and ensured that nothing unexpected is included in your changes.
+- [ ] You should have checked that the commit messages say why the change was made.

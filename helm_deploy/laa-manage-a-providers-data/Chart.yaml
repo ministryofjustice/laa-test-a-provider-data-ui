@@ -1,5 +1,5 @@
 apiVersion: v2
-name: laa-manage-a-providers-data
+name: laa-test-a-provider-data-ui
 description: A web service used internally and by providers to manage their information.
 
 # A chart can be either an 'application' or a 'library' chart.
