@@ -52,7 +52,7 @@ Ensure you do this before starting your Flask project as you're JS and SCSS impo
 Create your local config file `.env` from the template file:
 
 ```shell
-cp .env.example .env
+cp .env.example-local .env
 ```
 
 Don't worry, you can't commit your `.env` file.
