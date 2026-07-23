@@ -1,5 +1,8 @@
 # Manage a Providers Data
 
+> ⚠️ **DISCLAIMER: Non-Production Developer Test Client**
+> This repository is a **developer test client** and is **not intended for production use**. It should not be used with real, sensitive, or live data. Any data entered is for testing purposes only.
+
 [![Ministry of Justice Repository Compliance Badge](https://github-community.service.justice.gov.uk/repository-standards/api/template-repository/badge)](https://github-community.service.justice.gov.uk/repository-standards/template-repository)
 
 A flask application for managing legal aid providers' data.
