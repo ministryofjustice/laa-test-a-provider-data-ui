@@ -176,9 +176,7 @@ def change_liaison_manager(
         for existing_contact in contacts:
             if existing_contact.job_title == "Liaison manager" and existing_contact.primary == "Y":
                 # Set this contact to non-primary and add inactive_date
-                updated_contact = existing_contact.model_copy(
-                    update={"primary": "N", "inactive_date": date.today().isoformat()}
-                )
+                updated_contact = existing_contact.model_copy(update={"primary": "N", "inactive_date": date.today()})
                 try:
                     pda.update_contact(firm_id, office.firm_office_code, updated_contact)
                 except ProviderDataApiError:
@@ -195,7 +193,7 @@ def change_liaison_manager(
             "vendor_site_id": office.firm_office_id,
             "job_title": "Liaison manager",
             "primary": "Y",
-            "creation_date": date.today().isoformat(),
+            "creation_date": date.today(),
         }
 
         office_contact = contact.model_copy(update=contact_updates)
@@ -691,8 +689,12 @@ def get_office_false_balance_text(office: dict) -> str:
 
 def firm_office_url_for(endpoint, firm: Firm, **kwargs) -> str:
     kwargs["firm"] = firm
+
+    include_office = any(["office" in rule.arguments for rule in current_app.url_map._rules_by_endpoint[endpoint]])
+
     if firm.is_advocate or firm.is_barrister:
-        if "office" in kwargs:
+        # Advocate/barrister routes often do not need office, but some still do.
+        if "office" in kwargs and not include_office:
             del kwargs["office"]
 
     if "office" in kwargs:
@@ -700,9 +702,6 @@ def firm_office_url_for(endpoint, firm: Firm, **kwargs) -> str:
             # Remove a null office from the url before generating otherwise it will be added as a querystring
             del kwargs["office"]
         else:
-            include_office = any(
-                ["office" in rule.arguments for rule in current_app.url_map._rules_by_endpoint[endpoint]]
-            )
             if not include_office:
                 # This endpoint does not take an office argument
                 del kwargs["office"]
