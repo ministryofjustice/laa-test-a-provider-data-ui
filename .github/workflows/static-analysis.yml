@@ -55,12 +55,12 @@ jobs:
         uses: astral-sh/ruff-action@4919ec5cf1f49eff0871dbcea0da843445b837e6 # v3.6.1
         with:
           args: check --output-format=github
-          version: ">=0.12.3"
+          version: "0.13.1"
       - name: Format
         uses: astral-sh/ruff-action@4919ec5cf1f49eff0871dbcea0da843445b837e6 # v3.6.1
         with:
           args: format --check
-          version: ">=0.12.3"
+          version: "0.13.1"
 
 #  sonarqube:
 #    name: SonarQube
