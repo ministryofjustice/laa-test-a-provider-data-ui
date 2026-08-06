@@ -213,7 +213,12 @@ class SearchBankAccountFormView(AdvocateBarristerOfficeMixin, BaseFormView):
 
     def form_valid(self, form: BaseForm, **kwargs) -> str:
         pda = current_app.extensions["pda"]
-        pda.assign_bank_account_to_office(form.firm.firm_id, form.office.firm_office_code, form.bank_account.data)
+        try:
+            pda.assign_bank_account_to_office(form.firm.firm_id, form.office.firm_office_code, form.bank_account.data)
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst assigning bank account {e}")
+            flash("Unable to assign bank account with the configured backend", category="error")
+            return self.form_invalid(form, **kwargs)
         return super().form_valid(form, **kwargs)
 
     def get(self, firm, office: Office, context, **kwargs):
@@ -314,7 +319,12 @@ class AddBankAccountFormView(AdvocateBarristerOfficeMixin, BaseFormView):
             }
         )
         pda = current_app.extensions["pda"]
-        pda.add_bank_account_to_office(form.firm.firm_id, form.office.firm_office_code, bank_account)
+        try:
+            pda.add_bank_account_to_office(form.firm.firm_id, form.office.firm_office_code, bank_account)
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst adding office bank account {e}")
+            flash("Unable to add bank account with the configured backend", category="error")
+            return self.form_invalid(form)
         return super().form_valid(form)
 
     def get(self, firm, office, *args, **kwargs):
@@ -440,9 +450,14 @@ class ChangeOfficeFalseBalanceFormView(BaseFormView):
             contract_manager = STATUS_CONTRACT_MANAGER_INACTIVE
 
         data = {"contractManager": contract_manager}
-        self.get_api().update_office_false_balance(
-            firm_id=form.firm.firm_id, office_code=form.office.firm_office_code, data=data
-        )
+        try:
+            self.get_api().update_office_false_balance(
+                firm_id=form.firm.firm_id, office_code=form.office.firm_office_code, data=data
+            )
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst updating office false balance {e}")
+            flash("Unable to update false balance status with the configured backend", category="error")
+            return self.form_invalid(form, **kwargs)
 
         flash(f"<b>False balance status changed to {form.data.get('status', '').lower()}.</b>", category="success")
         return super().form_valid(form, **kwargs)
@@ -478,9 +493,14 @@ class ChangeOfficeDebtRecoveryFormView(BaseFormView):
             if status == "Yes"
             else DEFAULT_CONTRACT_MANAGER_NAME,
         }
-        self.get_api().update_office_debt_recovery(
-            firm_id=form.firm.firm_id, office_code=form.office.firm_office_code, data=payload
-        )
+        try:
+            self.get_api().update_office_debt_recovery(
+                firm_id=form.firm.firm_id, office_code=form.office.firm_office_code, data=payload
+            )
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst updating office debt recovery {e}")
+            flash("Unable to update debt recovery status with the configured backend", category="error")
+            return self.form_invalid(form)
         if status == "Yes":
             flash(self.get_yes_value_success_message(form), category="success")
             return redirect(self.get_success_url(form))
@@ -515,9 +535,14 @@ class ChangeOfficeIntervenedFormView(BaseFormView):
         data = {
             "intervenedDate": form.data.get("intervened_date") if status == "Yes" else None,
         }
-        self.get_api().update_office_intervened_date(
-            firm_id=form.firm.firm_id, office_code=form.office.firm_office_code, data=data
-        )
+        try:
+            self.get_api().update_office_intervened_date(
+                firm_id=form.firm.firm_id, office_code=form.office.firm_office_code, data=data
+            )
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst updating office intervened status {e}")
+            flash("Unable to update intervention status with the configured backend", category="error")
+            return self.form_invalid(form, **kwargs)
         flash(self.get_form_valid_success_message(form), category="success")
         return redirect(self.get_success_url(form))
 
@@ -587,7 +612,14 @@ class ApplyHeadOfficeInterventionFormView(BaseFormView):
             data = {
                 "intervenedDate": form.office.intervened_date,
             }
-            self.get_api().update_office_intervened_date(firm_id=form.firm.firm_id, office_code=office_code, data=data)
+            try:
+                self.get_api().update_office_intervened_date(
+                    firm_id=form.firm.firm_id, office_code=office_code, data=data
+                )
+            except ProviderDataApiError as e:
+                logger.error(f"Error {e.__class__.__name__} whilst applying head office intervention {e}")
+                flash("Unable to apply intervention to selected offices with the configured backend", category="error")
+                return self.form_invalid(form, **kwargs)
         flash(self.get_success_message(form), category="success")
         return redirect(self.get_success_url(form))
 
@@ -653,9 +685,14 @@ class ChangeOfficeHoldPaymentsFlagFormView(BaseFormView):
 
     def form_valid(self, form: BaseForm, **kwargs) -> Response:
         data = build_hold_payments_payload(form)
-        self.get_api().update_office_hold_payments(
-            firm_id=form.firm.firm_id, office_code=form.office.firm_office_code, data=data
-        )
+        try:
+            self.get_api().update_office_hold_payments(
+                firm_id=form.firm.firm_id, office_code=form.office.firm_office_code, data=data
+            )
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst updating office hold payments {e}")
+            flash("Unable to update payments hold status with the configured backend", category="error")
+            return self.form_invalid(form, **kwargs)
 
         flash(self.get_form_valid_success_message(form), category="success")
         return redirect(self.get_success_url(form))
@@ -702,8 +739,14 @@ class ApplyHeadOfficeHoldPaymentsFormView(BaseFormView):
 
         for office_code in office_codes:
             data = build_hold_payments_payload(form)
-            print("The data: ", data)
-            self.get_api().update_office_hold_payments(firm_id=form.firm.firm_id, office_code=office_code, data=data)
+            try:
+                self.get_api().update_office_hold_payments(
+                    firm_id=form.firm.firm_id, office_code=office_code, data=data
+                )
+            except ProviderDataApiError as e:
+                logger.error(f"Error {e.__class__.__name__} whilst applying hold payments to selected offices {e}")
+                flash("Unable to update selected offices with the configured backend", category="error")
+                return self.form_invalid(form, **kwargs)
         flash(self.get_success_message(form), category="success")
         return redirect(self.get_success_url(form))
 
@@ -718,6 +761,13 @@ class RemoveHeadOfficeHoldPaymentsFormView(ApplyHeadOfficeHoldPaymentsFormView):
 
         for office_code in office_codes:
             data = build_hold_payments_payload(form)
-            self.get_api().update_office_hold_payments(firm_id=form.firm.firm_id, office_code=office_code, data=data)
+            try:
+                self.get_api().update_office_hold_payments(
+                    firm_id=form.firm.firm_id, office_code=office_code, data=data
+                )
+            except ProviderDataApiError as e:
+                logger.error(f"Error {e.__class__.__name__} whilst removing hold payments from selected offices {e}")
+                flash("Unable to update selected offices with the configured backend", category="error")
+                return self.form_invalid(form, **kwargs)
         flash(self.get_success_message(form), category="success")
         return redirect(self.get_success_url(form))

@@ -1,4 +1,6 @@
 import logging
+import re
+from datetime import date
 from typing import Any, Dict, List, Optional, Union
 
 import requests
@@ -6,7 +8,7 @@ from pydantic import ValidationError
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
-from app.constants import YesNo
+from app.constants import FirmType, YesNo
 from app.models import BankAccount, Contact, Firm, Office
 from app.pda.errors import ProviderDataApiError
 
@@ -19,6 +21,12 @@ class PDAError(ProviderDataApiError):
 
 class PDAConnectionError(PDAError):
     """Raised when unable to connect to the Provider Data API."""
+
+    pass
+
+
+class PDACapabilityError(PDAError):
+    """Raised when an operation is not currently supported by the configured Provider Data API."""
 
     pass
 
@@ -187,10 +195,15 @@ class ProviderDataApi:
         Raises:
             ProviderDataApiError: For HTTP errors
         """
-        if response.status_code == 200:
+        if 200 <= response.status_code < 300:
+            if response.status_code == 204:
+                return empty_return
             try:
                 return response.json()
             except ValueError as e:
+                # Some successful API operations return no JSON body.
+                if empty_return is not None:
+                    return empty_return
                 self.logger.error(f"Failed to parse JSON response: {e}")
                 raise PDAError(f"Invalid JSON response: {e}")
 
@@ -207,6 +220,192 @@ class ProviderDataApi:
                 response.raise_for_status()
             except requests.HTTPError as e:
                 raise PDAError(f"HTTP error: {e}")
+
+    def _unwrap_data_envelope(self, data: Any) -> Any:
+        """Return payload for both legacy and PDA-R2 style envelopes."""
+        if isinstance(data, dict) and "data" in data:
+            return data["data"]
+        return data
+
+    def _extract_collection(self, data: Any, keys: List[str]) -> List[Dict[str, Any]]:
+        """Extract list payload from legacy or PDA-R2 list responses."""
+        payload = self._unwrap_data_envelope(data)
+
+        if isinstance(payload, list):
+            return payload
+
+        if isinstance(payload, dict):
+            if isinstance(payload.get("content"), list):
+                return payload["content"]
+
+            for key in keys:
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return value
+
+        return []
+
+    @staticmethod
+    def _int_or_default(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _normalize_firm_data(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """Map PDA-R2 firm DTOs to the legacy Firm model shape."""
+        if not isinstance(item, dict):
+            return {}
+
+        # Legacy shape is already compatible with model aliases.
+        if "firmId" in item or "firmName" in item:
+            return item
+
+        firm_number = item.get("firmNumber")
+        firm_type = item.get("firmType")
+        legal = item.get("legalServicesProvider") or {}
+        practitioner = item.get("practitioner") or {}
+        advocate = practitioner.get("advocate") or {}
+        parent_firms = practitioner.get("parentFirms") or []
+        first_parent = parent_firms[0] if parent_firms else {}
+
+        solicitor_advocate = None
+        if firm_type == "Advocate":
+            solicitor_advocate = "Yes"
+        elif firm_type == "Barrister":
+            solicitor_advocate = "No"
+
+        constitutional_status = legal.get("constitutionalStatus")
+        if constitutional_status is None:
+            constitutional_status = "N/A"
+
+        normalized = {
+            "firmNumber": str(firm_number) if firm_number is not None else "",
+            "firmId": self._int_or_default(firm_number),
+            "firmName": item.get("name") or item.get("firmName") or "",
+            "firmType": firm_type,
+            "constitutionalStatus": constitutional_status,
+            "parentFirmId": self._int_or_default(first_parent.get("parentFirmNumber"), 0),
+            "solicitorAdvocateYN": solicitor_advocate,
+            "advocateLevel": advocate.get("advocateLevel"),
+            "barCouncilRoll": advocate.get("barCouncilRollNumber")
+            or advocate.get("solicitorRegulationAuthorityRollNumber"),
+            "companyHouseNumber": legal.get("companiesHouseNumber"),
+            "indemnityReceivedDate": legal.get("indemnityReceivedDate"),
+            "holdAllPaymentsFlag": "N",
+            "nonProfitOrganisation": "N/A",
+            "smallBusinessFlag": "N",
+            "womenOwnedFlag": "N",
+            "inactiveDate": legal.get("activeDateTo"),
+        }
+
+        # Remove empty strings for optional text fields to avoid noisy model data.
+        if not normalized["firmNumber"]:
+            normalized.pop("firmNumber")
+        if not normalized["firmName"]:
+            normalized.pop("firmName")
+
+        return normalized
+
+    def _normalize_office_data(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """Map PDA-R2 office DTOs to the legacy Office model shape."""
+        if not isinstance(item, dict):
+            return {}
+
+        # Legacy shape is already compatible with model aliases.
+        if "firmOfficeCode" in item or "firm_office_code" in item:
+            return item
+
+        address = item.get("address") or {}
+        dx_details = item.get("dxDetails") or {}
+        payment = item.get("payment") or {}
+        vat_registration = item.get("vatRegistration") or {}
+        intervened = item.get("intervened") or {}
+
+        hold_all_payments_flag = None
+        if payment.get("paymentHeldFlag") is not None:
+            hold_all_payments_flag = "Y" if payment.get("paymentHeldFlag") else "N"
+
+        debt_recovery_flag = None
+        if item.get("debtRecoveryFlag") is not None:
+            debt_recovery_flag = "Yes" if item.get("debtRecoveryFlag") else "No"
+
+        account_number = item.get("accountNumber") or item.get("firmOfficeCode")
+        office_numeric_id = 0
+        if isinstance(account_number, str):
+            digits = "".join(re.findall(r"\d+", account_number))
+            office_numeric_id = self._int_or_default(digits, 0)
+
+        normalized = {
+            "firmOfficeId": office_numeric_id,
+            "firmOfficeCode": item.get("accountNumber") or item.get("firmOfficeCode"),
+            "officeName": item.get("name") or item.get("officeName") or item.get("accountNumber"),
+            "addressLine1": address.get("line1"),
+            "addressLine2": address.get("line2"),
+            "addressLine3": address.get("line3"),
+            "addressLine4": address.get("line4"),
+            "city": address.get("townOrCity") or address.get("city"),
+            "county": address.get("county"),
+            "postCode": address.get("postcode"),
+            "dxNumber": dx_details.get("dxNumber"),
+            "dxCentre": dx_details.get("dxCentre"),
+            "telephoneNumber": item.get("telephoneNumber"),
+            "emailAddress": item.get("emailAddress"),
+            "vatRegistrationNumber": vat_registration.get("vatNumber"),
+            "headOffice": "N/A" if item.get("headOfficeFlag") else None,
+            "paymentMethod": payment.get("paymentMethod"),
+            "inactiveDate": item.get("activeDateTo"),
+            "holdAllPaymentsFlag": hold_all_payments_flag,
+            "holdReason": payment.get("paymentHeldReason"),
+            "debtRecoveryFlag": debt_recovery_flag,
+            "intervenedDate": intervened.get("intervenedChangeDate") if intervened.get("intervenedFlag") else None,
+        }
+
+        return {k: v for k, v in normalized.items() if v is not None}
+
+    def _normalize_bank_account_data(self, item: Dict[str, Any], office_code: str) -> Dict[str, Any]:
+        """Map PDA-R2 bank account DTOs to the legacy BankAccount model shape."""
+        if not isinstance(item, dict):
+            return {}
+
+        if "bankAccountId" in item or "accountNumber" in item and "bankAccountName" in item:
+            return item
+
+        account_number = item.get("accountNumber")
+        account_name = item.get("accountName") or "Unknown account"
+        sort_code = item.get("sortCode") or "000000"
+        primary_flag = item.get("primaryFlag")
+        if isinstance(primary_flag, bool):
+            primary_flag = "Y" if primary_flag else "N"
+        elif isinstance(primary_flag, str):
+            primary_flag = "Y" if primary_flag.strip().lower() in {"y", "yes", "true", "1"} else "N"
+        else:
+            primary_flag = "N"
+
+        office_digits = "".join(re.findall(r"\d+", office_code or ""))
+        vendor_site_id = self._int_or_default(office_digits, 1)
+
+        guid_digits = "".join(re.findall(r"\d+", str(item.get("guid", ""))))
+        bank_account_id = self._int_or_default(guid_digits, 1)
+
+        return {
+            "bankAccountId": bank_account_id,
+            "vendorSiteId": vendor_site_id,
+            "bankName": item.get("bankName") or "Unknown bank",
+            "bankBranchName": item.get("bankBranchName") or "Unknown branch",
+            "sortCode": sort_code,
+            "accountNumber": account_number,
+            "bankAccountName": account_name,
+            "currencyCode": item.get("currencyCode") or "GBP",
+            "accountType": item.get("accountType") or "Current",
+            "primaryFlag": primary_flag,
+            "startDate": item.get("activeDateFrom") or item.get("startDate") or date.today().isoformat(),
+            "endDate": item.get("activeDateTo") or item.get("endDate"),
+        }
+
+    def _unsupported(self, message: str) -> None:
+        """Raise a typed error for API features that are not yet supported."""
+        raise PDACapabilityError(message)
 
     def get_provider_firm(self, firm_id: int) -> Firm | None:
         """
@@ -228,7 +427,11 @@ class ProviderDataApi:
             return None
 
         try:
-            firm = raw_data.get("firm")
+            payload = self._unwrap_data_envelope(raw_data)
+            firm = payload.get("firm") if isinstance(payload, dict) else None
+            if firm is None and isinstance(payload, dict):
+                firm = payload.get("providerFirm", payload)
+            firm = self._normalize_firm_data(firm)
             return Firm(**firm)
         except ValidationError as e:
             self.logger.error(f"Invalid firm data from API for firm {firm_id}: {e}")
@@ -248,7 +451,12 @@ class ProviderDataApi:
             return []
 
         try:
-            return [Firm(**firm_data) for firm_data in raw_data["firms"]]
+            firms = self._extract_collection(raw_data, ["firms", "providerFirms"])
+            normalized_firms = []
+            for firm_data in firms:
+                unwrapped = firm_data.get("firm") if isinstance(firm_data, dict) and "firm" in firm_data else firm_data
+                normalized_firms.append(Firm(**self._normalize_firm_data(unwrapped)))
+            return normalized_firms
         except ValidationError as e:
             self.logger.error(f"Invalid firms data from API: {e}")
             raise PDAError(f"Invalid firms data: {e}")
@@ -270,10 +478,18 @@ class ProviderDataApi:
         raw_data = self._handle_response(response, None)
 
         if raw_data is None:
+            fallback_response = self.get("/provider-firms-offices", params={"officeCode": office_code, "pageSize": 1})
+            fallback_data = self._handle_response(fallback_response, [])
+            offices = self._extract_collection(fallback_data, ["offices"])
+            raw_data = offices[0] if offices else None
+
+        if raw_data is None:
             return None
 
         try:
-            office = raw_data.get("office", raw_data)  # Handle both wrapped and direct responses
+            payload = self._unwrap_data_envelope(raw_data)
+            office = payload.get("office", payload) if isinstance(payload, dict) else payload
+            office = self._normalize_office_data(office)
             return Office(**office)
         except ValidationError as e:
             self.logger.error(f"Invalid office data from API for office {office_code}: {e}")
@@ -295,12 +511,17 @@ class ProviderDataApi:
         response = self.get(f"/provider-firms/{firm_id}/provider-offices")
         raw_data = self._handle_response(response, [])
 
-        if not raw_data:
+        offices_data = self._extract_collection(raw_data, ["offices"])
+        if not offices_data:
+            fallback_response = self.get(f"/provider-firms/{firm_id}/offices")
+            fallback_data = self._handle_response(fallback_response, [])
+            offices_data = self._extract_collection(fallback_data, ["offices"])
+
+        if not offices_data:
             return []
 
         try:
-            offices_data = raw_data.get("offices", raw_data)  # Handle both wrapped and direct responses
-            return [Office(**office_data) for office_data in offices_data]
+            return [Office(**self._normalize_office_data(office_data)) for office_data in offices_data]
         except ValidationError as e:
             self.logger.error(f"Invalid offices data from API for firm {firm_id}: {e}")
             raise PDAError(f"Invalid offices data: {e}")
@@ -325,6 +546,11 @@ class ProviderDataApi:
             # Head offices have headOffice = "N/A"
             if office.head_office == "N/A":
                 return office
+
+        # Some backends don't explicitly mark head office for single-office firms.
+        if len(offices) == 1:
+            return offices[0]
+
         return None
 
     def get_provider_users(self, firm_id: int) -> List[Dict[str, Any]]:
@@ -343,6 +569,26 @@ class ProviderDataApi:
         response = self.get(f"/provider-firms/{firm_id}/provider-users")
         return self._handle_response(response, [])
 
+    def get_provider_children(self, firm_id: int, only_firm_type: FirmType | None = None) -> List[Firm]:
+        """
+        Get child provider firms for a given parent firm.
+
+        This method uses the full firm list and filters locally so that mock and
+        real API clients expose a compatible interface.
+        """
+        if not isinstance(firm_id, int) or firm_id <= 0:
+            raise ValueError("firm_id must be a positive integer")
+
+        firms = self.get_all_provider_firms()
+        children: List[Firm] = []
+        for firm in firms:
+            if firm.parent_firm_id != firm_id:
+                continue
+            if only_firm_type is not None and firm.firm_type != only_firm_type:
+                continue
+            children.append(firm)
+        return children
+
     def get_office_contract_details(self, firm_id: int, office_code: str) -> Optional[Dict[str, Any]]:
         """
         Get contract details for a specific office.
@@ -360,7 +606,9 @@ class ProviderDataApi:
             raise ValueError("office_code must be a non-empty string")
 
         response = self.get(f"/provider-firms/{firm_id}/provider-offices/{office_code}/office-contract-details")
-        return self._handle_response(response, {})
+        data = self._handle_response(response, {})
+        payload = self._unwrap_data_envelope(data)
+        return payload if isinstance(payload, dict) else {}
 
     def get_office_schedule_details(self, firm_id: int, office_code: str) -> Optional[Dict[str, Any]]:
         """
@@ -379,7 +627,9 @@ class ProviderDataApi:
             raise ValueError("office_code must be a non-empty string")
 
         response = self.get(f"/provider-firms/{firm_id}/provider-offices/{office_code}/schedules")
-        return self._handle_response(response, {})
+        data = self._handle_response(response, {})
+        payload = self._unwrap_data_envelope(data)
+        return payload if isinstance(payload, dict) else {}
 
     def get_office_bank_accounts(self, firm_id: int, office_code: str) -> List[BankAccount]:
         """
@@ -399,10 +649,17 @@ class ProviderDataApi:
 
         response = self.get(f"/provider-firms/{firm_id}/provider-offices/{office_code}/bank-account-details")
         data = self._handle_response(response, [])
+
+        items = self._extract_collection(data, ["bankAccounts", "bankAccountDetails"])
+        if not items:
+            fallback_response = self.get(f"/provider-firms/{firm_id}/offices/{office_code}/bank-details")
+            fallback_data = self._handle_response(fallback_response, [])
+            items = self._extract_collection(fallback_data, ["bankAccounts", "bankAccountDetails"])
+
         bank_accounts = []
-        if response:
-            for bank_account in data:
-                bank_accounts.append(BankAccount(**bank_account))
+        if items:
+            for bank_account in items:
+                bank_accounts.append(BankAccount(**self._normalize_bank_account_data(bank_account, office_code)))
         return bank_accounts
 
     def patch_office(self, firm_id: int, office_code: str, fields_to_update: dict):
@@ -411,6 +668,41 @@ class ProviderDataApi:
             json=fields_to_update,
         )
         return self._handle_response(response, {})
+
+    @staticmethod
+    def _to_bool(value: Any) -> bool | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"yes", "y", "true", "1"}:
+                return True
+            if normalized in {"no", "n", "false", "0"}:
+                return False
+        return None
+
+    def update_office_payment_method(self, firm_id: int, office_code: str, payment_method: str) -> Office:
+        if not payment_method or not isinstance(payment_method, str):
+            raise ValueError("payment_method must be a non-empty string")
+
+        payment_method_lookup = {
+            "electronic": "EFT",
+            "eft": "EFT",
+            "cheque": "CHECK",
+            "check": "CHECK",
+        }
+        mapped_payment_method = payment_method_lookup.get(payment_method.strip().lower(), payment_method)
+
+        self.patch_office(firm_id, office_code, {"paymentMethod": mapped_payment_method})
+        office = self.get_provider_office(office_code)
+        if not office:
+            raise PDAError(f"Office {office_code} not found for firm {firm_id}")
+        return office
+
+    def patch_provider_firm(self, firm_id: int, fields_to_update: dict) -> Firm | None:
+        return self.patch_provider(firm_id, fields_to_update)
 
     def get_office_contacts(self, firm_id: int, office_code: str) -> List[Contact]:
         """
@@ -426,7 +718,40 @@ class ProviderDataApi:
         Raises:
             NotImplementedError: This functionality is not yet supported by the real API
         """
-        raise NotImplementedError("Getting office contacts is not yet supported by the real Provider Data API")
+        if not isinstance(firm_id, int) or firm_id <= 0:
+            raise ValueError("firm_id must be a positive integer")
+        if not office_code or not isinstance(office_code, str):
+            raise ValueError("office_code must be a non-empty string")
+
+        response = self.get(f"/provider-firms/{firm_id}/offices/{office_code}/liaison-managers")
+        raw_data = self._handle_response(response, [])
+        managers = self._extract_collection(raw_data, ["liaisonManagers"])
+        if not managers:
+            return []
+
+        office = self.get_provider_office(office_code)
+        vendor_site_id = office.firm_office_id if office and office.firm_office_id > 0 else 1
+
+        contacts: List[Contact] = []
+        for manager in managers:
+            try:
+                contacts.append(
+                    Contact(
+                        vendorSiteId=vendor_site_id,
+                        firstName=manager.get("firstName") or "",
+                        lastName=manager.get("lastName") or "",
+                        emailAddress=manager.get("emailAddress") or "unknown@example.com",
+                        telephoneNumber=manager.get("telephoneNumber"),
+                        website=None,
+                        jobTitle="Liaison manager",
+                        primary="Y" if manager.get("linkedFlag", True) else "N",
+                        activeFrom=manager.get("activeDateFrom"),
+                    )
+                )
+            except ValidationError as e:
+                self.logger.error(f"Invalid liaison manager data for office {office_code}: {e}")
+
+        return contacts
 
     def create_office_contact(self, firm_id: int, office_code: str, contact: Contact) -> Contact:
         """
@@ -443,7 +768,7 @@ class ProviderDataApi:
         Raises:
             NotImplementedError: This functionality is not yet supported by the real API
         """
-        raise NotImplementedError("Creating office contacts is not yet supported by the real Provider Data API")
+        self._unsupported("Creating office contacts is not yet supported by the real Provider Data API")
 
     def update_contact(self, firm_id: int, office_code: str, contact: Contact) -> Contact:
         """
@@ -460,7 +785,7 @@ class ProviderDataApi:
         Raises:
             NotImplementedError: This functionality is not yet supported by the real API
         """
-        raise NotImplementedError("Updating contacts is not yet supported by the real Provider Data API")
+        self._unsupported("Updating contacts is not yet supported by the real Provider Data API")
 
     def patch_provider(self, firm_id: int, fields_to_update: dict):
         response = self.patch(
@@ -481,7 +806,7 @@ class ProviderDataApi:
 
         Returns:
         """
-        raise NotImplementedError("Assigning bank account is not yet supported by the real Provider Data API")
+        self._unsupported("Assigning bank account is not yet supported by the real Provider Data API")
 
     def get_bank_details(self, firm_id, bank_account_id: str) -> Optional[BankAccount]:
         response = self.get(f"/provider-firms/{firm_id}/bank-details/{bank_account_id}")
@@ -500,13 +825,22 @@ class ProviderDataApi:
         """
         response = self.get(f"/provider-firms/{firm_id}/bank-account-details")
         items = self._handle_response(response, [])
+        items = self._extract_collection(items, ["bankAccounts", "bankAccountDetails"])
+        if not items:
+            fallback_response = self.get(f"/provider-firms/{firm_id}/bank-details")
+            fallback_data = self._handle_response(fallback_response, [])
+            items = self._extract_collection(fallback_data, ["bankAccounts", "bankAccountDetails"])
         accounts = []
         for item in items:
-            accounts.append(BankAccount(**item))
+            accounts.append(BankAccount(**self._normalize_bank_account_data(item, "")))
         return accounts
 
     def update_office_contact_details(self, firm_id, firm_office_code, payload):
-        raise NotImplementedError("Update contact details has not been implemented yet")
+        self.patch_office(firm_id, firm_office_code, payload)
+        office = self.get_provider_office(firm_office_code)
+        if not office:
+            raise PDAError(f"Office {firm_office_code} not found for firm {firm_id}")
+        return office
 
     def add_bank_account_to_office(self, firm_id: int, office_code: str, bank_account: BankAccount) -> BankAccount:
         """
@@ -520,14 +854,14 @@ class ProviderDataApi:
         Returns:
             BankAccount: The bank account added to the given office
         """
-        raise NotImplementedError("Adding bank account to an office is not yet supported by the real Provider Data API")
+        self._unsupported("Adding bank account to an office is not yet supported by the real Provider Data API")
 
     def get_all_bank_accounts(self) -> List[BankAccount]:
         """
         Get all bank accounts.
         Returns: List[BankAccount]
         """
-        raise NotImplementedError("Getting all bank accounts is currently not supported by the real Provider Data API")
+        self._unsupported("Getting all bank accounts is currently not supported by the real Provider Data API")
 
     def update_provider_firm_name(self, firm_id: int, new_firm_name: str) -> Firm:
         """
@@ -537,12 +871,16 @@ class ProviderDataApi:
             new_firm_name: The new firm name
         Returns: Firm
         """
-        raise NotImplementedError("Updating provider firm name is not yet supported by the real API")
+        firm = self.patch_provider(firm_id, {"firmName": new_firm_name})
+        if not firm:
+            raise PDAError(f"Firm {firm_id} not found")
+        return firm
 
     def update_legal_service_provider_details(self, firm_id: int, data: dict):
-        raise NotImplementedError(
-            "Updating legal services provider details is not yet supported by the real Provider Data API"
-        )
+        firm = self.patch_provider(firm_id, data)
+        if not firm:
+            raise PDAError(f"Firm {firm_id} not found")
+        return firm
 
     def update_barrister_details(self, firm_id, barrister_details: dict) -> Firm:
         """
@@ -553,7 +891,10 @@ class ProviderDataApi:
 
         Returns: Firm
         """
-        raise NotImplementedError("Updating barrister details is currently not supported by the real Provider Data API")
+        firm = self.patch_provider(firm_id, barrister_details)
+        if not firm:
+            raise PDAError(f"Firm {firm_id} not found")
+        return firm
 
     def update_advocate_details(self, firm_id, advocate_details: dict) -> Firm:
         """
@@ -564,7 +905,10 @@ class ProviderDataApi:
 
         Returns: Firm
         """
-        raise NotImplementedError("Updating advocate details is currently not supported by the real API")
+        firm = self.patch_provider(firm_id, advocate_details)
+        if not firm:
+            raise PDAError(f"Firm {firm_id} not found")
+        return firm
 
     def update_office_false_balance(self, firm_id: int, office_code: str, data: dict) -> Office:
         """
@@ -576,9 +920,11 @@ class ProviderDataApi:
 
         Returns: Office
         """
-        raise NotImplementedError(
-            "Updating office false balance is currently not supported by the real Provider Data API"
-        )
+        self.patch_office(firm_id, office_code, data)
+        office = self.get_provider_office(office_code)
+        if not office:
+            raise PDAError(f"Office {office_code} not found for firm {firm_id}")
+        return office
 
     def update_office_intervened_date(self, firm_id: int, office_code: str, data: dict) -> Office:
         """
@@ -590,15 +936,23 @@ class ProviderDataApi:
 
         Returns: Office
         """
-        raise NotImplementedError("Updating office intervened date is not yet supported by the real Provider Data API")
+        payload = data.copy()
+        if "intervenedDate" in payload:
+            payload["intervenedFlag"] = payload["intervenedDate"] is not None
+            payload["intervenedChangeDate"] = payload["intervenedDate"]
+        self.patch_office(firm_id, office_code, payload)
+        office = self.get_provider_office(office_code)
+        if not office:
+            raise PDAError(f"Office {office_code} not found for firm {firm_id}")
+        return office
 
     def get_list_of_contract_manager_names(self):
         """Get a list of all known contract managers."""
-        raise NotImplementedError(
+        self._unsupported(
             "Getting list of known contract managers is currently not supported by the real API - see https://dsdmoj.atlassian.net/wiki/spaces/laagetaccess/pages/5912559872/Contract+Manager+list"
         )
 
-    def update_office_debt_recovery(self, firm_id: int, office_code: str, data: YesNo) -> Office:
+    def update_office_debt_recovery(self, firm_id: int, office_code: str, data: dict | YesNo) -> Office:
         """
         Update an existing office debt recovery.
         Args:
@@ -608,7 +962,16 @@ class ProviderDataApi:
 
         Returns: Office
         """
-        raise NotImplementedError("Updating office debt recovery is currently not supported by the real API")
+        payload = data.copy() if isinstance(data, dict) else {"debtRecoveryFlag": data}
+        if "debtRecoveryFlag" in payload:
+            bool_value = self._to_bool(payload.get("debtRecoveryFlag"))
+            if bool_value is not None:
+                payload["debtRecoveryFlag"] = bool_value
+        self.patch_office(firm_id, office_code, payload)
+        office = self.get_provider_office(office_code)
+        if not office:
+            raise PDAError(f"Office {office_code} not found for firm {firm_id}")
+        return office
 
     def update_office_hold_payments(self, firm_id: int, office_code: str, data: dict) -> Office:
         """
@@ -620,6 +983,13 @@ class ProviderDataApi:
 
         Returns: Office
         """
-        raise NotImplementedError(
-            "Updating office hold payments status is currently not supported by the real Provider Data API"
-        )
+        payload = data.copy()
+        if "holdAllPaymentsFlag" in payload:
+            bool_value = self._to_bool(payload.get("holdAllPaymentsFlag"))
+            if bool_value is not None:
+                payload["holdAllPaymentsFlag"] = bool_value
+        self.patch_office(firm_id, office_code, payload)
+        office = self.get_provider_office(office_code)
+        if not office:
+            raise PDAError(f"Office {office_code} not found for firm {firm_id}")
+        return office

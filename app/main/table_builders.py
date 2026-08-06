@@ -108,6 +108,11 @@ def get_main_table(firm: Firm, head_office: Office | None, parent_firm: Firm | N
                     endpoint = data["link"]
                     anchor = data.get("anchor")
                 try:
+                    endpoint_rules = current_app.url_map._rules_by_endpoint.get(endpoint, [])
+                    endpoint_requires_office = any("office" in rule.arguments for rule in endpoint_rules)
+                    if endpoint_requires_office and not head_office:
+                        continue
+
                     url = firm_office_url_for(endpoint, firm=firm, office=head_office, _anchor=anchor)
                     row_action_urls[action_key] = url
                 except BuildError as e:

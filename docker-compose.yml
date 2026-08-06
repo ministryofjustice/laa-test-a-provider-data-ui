@@ -1,10 +1,9 @@
 services:
   redis:
     image: redis:8-alpine
-    container_name: redis
     restart: always
     ports:
-      - "6379:6379"
+      - "6380:6379"
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -31,12 +30,11 @@ services:
       - FLASK_RUN_PORT=8020
       - SENTRY_DSN=${SENTRY_DSN:-}
       - REDIS_URL=redis://redis:6379/0
-      - REDIS_URL=redis://redis:6379/0
       - ENTRA_ID_SKIP_AUTH=True
-      - PDA_USE_MOCK_API=True
-      - PDA_URL="https://mock-api.com"
-      - PDA_ENVIRONMENT=Mock
-      - PDA_API_KEY="mock-api-key"
+      - PDA_USE_MOCK_API=${PDA_USE_MOCK_API:-True}
+      - PDA_URL=${PDA_URL:-https://mock-api.com}
+      - PDA_ENVIRONMENT=${PDA_ENVIRONMENT:-Mock}
+      - PDA_API_KEY=${PDA_API_KEY:-mock-api-key}
     ports:
       - "8020:8020"
     volumes:
