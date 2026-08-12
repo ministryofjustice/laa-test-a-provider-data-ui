@@ -1,5 +1,6 @@
-import pytest
 import re
+
+import pytest
 from flask import url_for
 from playwright.sync_api import Page, expect
 

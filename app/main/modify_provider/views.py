@@ -55,7 +55,12 @@ class ChangeLiaisonManagerFormView(FullWidthBaseFormView):
         if hasattr(form, "office"):
             # ...but if we have a specific office, only change the office liaison manager.
             office = form.office
-        change_liaison_manager(new_contact, form.firm.firm_id, office=office)
+        try:
+            change_liaison_manager(new_contact, form.firm.firm_id, office=office)
+        except (ValueError, RuntimeError, ProviderDataApiError) as e:
+            logger.error(f"Error {e.__class__.__name__} whilst changing liaison manager for {form.firm.firm_id} {e}")
+            flash("Unable to change liaison manager with the configured backend", category="error")
+            return self.form_invalid(form)
 
         return redirect(self.get_success_url(form.firm, office=office))
 
@@ -221,7 +226,12 @@ class ChangeLegalServicesProviderNameFormView(BaseFormView):
         return self.get_form_class()(firm=firm, provider_name=firm.firm_name)
 
     def form_valid(self, form):
-        self.get_api().update_provider_firm_name(form.firm.firm_id, form.provider_name.data)
+        try:
+            self.get_api().update_provider_firm_name(form.firm.firm_id, form.provider_name.data)
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst updating provider name for {form.firm.firm_id} {e}")
+            flash("Unable to update provider name with the configured backend", category="error")
+            return self.form_invalid(form)
         flash(f"<b>{form.firm.firm_type.lower().capitalize()} name successfully updated</b>", category="success")
         return super().form_valid(form)
 
@@ -248,7 +258,12 @@ class ChangeLspDetailsFormView(BaseFormView):
         if data["indemnityReceivedDate"]:
             data["indemnityReceivedDate"] = data["indemnityReceivedDate"].isoformat()
 
-        self.get_api().update_legal_service_provider_details(form.firm.firm_id, data)
+        try:
+            self.get_api().update_legal_service_provider_details(form.firm.firm_id, data)
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst updating LSP details for {form.firm.firm_id} {e}")
+            flash("Unable to update legal services provider details with the configured backend", category="error")
+            return self.form_invalid(form)
         flash("<b>Legal services provider overview successfully updated<b>", category="success")
         return super().form_valid(form)
 
@@ -278,7 +293,12 @@ class BarristerChangeDetailsView(AdvocateBarristerOfficeMixin, BaseFormView):
             "advocateLevel": form.data["barrister_level"],
             "barCouncilRoll": form.data["bar_council_roll_number"],
         }
-        self.get_api().update_barrister_details(firm_id=form.firm.firm_id, barrister_details=barrister_details)
+        try:
+            self.get_api().update_barrister_details(firm_id=form.firm.firm_id, barrister_details=barrister_details)
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst updating barrister details for {form.firm.firm_id} {e}")
+            flash("Unable to update barrister details with the configured backend", category="error")
+            return self.form_invalid(form)
         flash("Barrister overview updated successfully", category="success")
 
         return super().form_valid(form)
@@ -327,7 +347,12 @@ class ChangeAdvocateDetailsFormView(BaseFormView):
             advocateLevel=form.data.get("advocate_level"),
             barCouncilRoll=form.data.get("sra_roll_number"),
         )
-        self.get_api().update_advocate_details(form.firm.firm_id, data)
+        try:
+            self.get_api().update_advocate_details(form.firm.firm_id, data)
+        except ProviderDataApiError as e:
+            logger.error(f"Error {e.__class__.__name__} whilst updating advocate details for {form.firm.firm_id} {e}")
+            flash("Unable to update advocate details with the configured backend", category="error")
+            return self.form_invalid(form)
         flash("<b>Advocate overview successfully updated<b>", category="success")
         return super().form_valid(form)
 

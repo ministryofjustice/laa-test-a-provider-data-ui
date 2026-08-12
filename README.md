@@ -62,7 +62,7 @@ Don't worry, you can't commit your `.env` file.
 
 ### Run the service
 
-Add `redis://localhost:6379/0` as the REDIS_URL in your .env file
+Add `redis://localhost:6380/0` as the REDIS_URL in your .env file
 
 start redis using
 
@@ -88,6 +88,29 @@ For local development and deployments, run the below code to create and run the 
 ```shell
 ./run_local.sh
 ```
+
+### Docker backend configuration
+
+The UI can run in mock mode or against a real PDA-R2 backend using environment variables.
+
+- Mock mode (default):
+  - `PDA_USE_MOCK_API=True`
+  - `PDA_URL=https://mock-api.com`
+  - `PDA_API_KEY=mock-api-key`
+- Real backend mode:
+  - `PDA_USE_MOCK_API=False`
+  - `PDA_URL=http://<backend-host>:<port>`
+  - `PDA_API_KEY=<real-api-key>`
+
+These values are read by `docker compose` from your shell environment or `.env`.
+
+Example:
+
+```shell
+PDA_USE_MOCK_API=False PDA_URL=http://host.docker.internal:8080 PDA_API_KEY=your-key docker compose up --build
+```
+
+`host.docker.internal` works when the backend runs on your host and the UI runs in Docker Desktop.
 
 ## Testing
 

@@ -331,7 +331,7 @@ class TestChangeLiaisonManager:
             result = change_liaison_manager(new_contact, 1)
 
             assert result.creation_date is not None
-            expected_date = date.today().isoformat()
+            expected_date = date.today()
             assert result.creation_date == expected_date
 
     @patch("app.main.utils.logger")
