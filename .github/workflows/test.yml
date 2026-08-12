@@ -41,7 +41,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write 
-      contents: read  
+      contents: read
+    services:
+      redis:
+        image: redis:8-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     steps:
       - name: Checkout the repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -78,6 +88,10 @@ jobs:
           ENTRA_ID_SKIP_AUTH: True
           SECRET_KEY: TEST_KEY
           REDIS_URL: redis://localhost:6379/0
+          PDA_USE_MOCK_API: True
+          PDA_URL: https://mock-api.example.com
+          PDA_API_KEY: mock-api-key
+          PDA_ENVIRONMENT: Mock
 
       - name: Wait for Flask app to start
         run: |
