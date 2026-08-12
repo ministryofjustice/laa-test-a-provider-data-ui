@@ -70,6 +70,20 @@ jobs:
   
       - name: Install Playwright browsers
         run: npx playwright install
+       
+      - name: Start Flask app
+        run: python -m flask run --port 8020 &
+        env:
+          FLASK_APP: app:create_app
+          ENTRA_ID_SKIP_AUTH: True
+          SECRET_KEY: TEST_KEY
+          REDIS_URL: redis://localhost:6379/0
+
+      - name: Wait for Flask app to start
+        run: |
+          for i in {1..30}; do
+            curl http://localhost:8020 && break || sleep 1
+          done  
   
       - name: Run E2E tests with Cucumber
         run: npm run test:e2e:cucumber
