@@ -23,6 +23,11 @@ class OfficeContactDetailsFormView(BaseFormView):
         head_office: Office = self.get_api().get_head_office(form.firm.firm_id)
         if head_office:
             contract_manager = head_office.contract_manager
+        head_office_contacts = (
+            self.get_api().get_office_contacts(form.firm.firm_id, head_office.firm_office_code) if head_office else []
+        )
+        primary_contact = next((contact for contact in head_office_contacts if contact.primary == "Y"), None)
+        primary_contact = primary_contact or (head_office_contacts[0] if head_office_contacts else None)
         # Add contact details to the existing office dict
         office_details = {
             "office_name": form.firm.firm_name,
@@ -40,11 +45,17 @@ class OfficeContactDetailsFormView(BaseFormView):
             "dx_centre": form.data.get("dx_centre"),
             "payment_method": "Electronic",  # The new office must be set to Electronic payment method so we do it here before the office is created
             "contract_manager": contract_manager,
+            "contract_manager_guid": head_office.contract_manager_guid if head_office else None,
         }
 
         # Create the office
         office = Office(**office_details)
-        new_office = add_new_office(office, firm_id=form.firm.firm_id)
+        new_office = add_new_office(
+            office,
+            firm_id=form.firm.firm_id,
+            liaison_manager=primary_contact,
+            contract_manager_guid=head_office.contract_manager_guid if head_office else None,
+        )
 
         # The new office should have the same contacts as the firm
         _replicate_office_contacts(

@@ -349,22 +349,36 @@ class ChangeContractManagerFormView(BaseFormView):
     def get_success_url(self, firm, office: Office) -> str:
         return url_for("main.view_office", firm=firm.firm_id, office=office.firm_office_code)
 
-    def change_contract_manager(self, contract_manager: str, firm, office=None):
+    def change_contract_manager(self, contract_manager_guid: str, firm, office=None):
         pda = self.get_api()
-        change_fields = {"contractManager": contract_manager}
         try:
-            pda.patch_office(firm.firm_id, office.firm_office_code, change_fields)
+            if hasattr(pda, "assign_contract_manager_to_office"):
+                pda.assign_contract_manager_to_office(firm.firm_id, office.firm_office_code, contract_manager_guid)
+            else:
+                manager = next(
+                    (
+                        item
+                        for item in pda.get_list_of_contract_manager_names()
+                        if item.get("guid") == contract_manager_guid
+                    ),
+                    None,
+                )
+                if not manager:
+                    raise ProviderDataApiError("Selected contract manager was not found")
+                pda.patch_office(firm.firm_id, office.firm_office_code, {"contractManager": manager["name"]})
         except ProviderDataApiError as e:
             logger.error(f"{e.__class__.__name__} whilst changing contract manager on firm {firm} office {office}: {e}")
             return False
         return True
 
     def form_valid(self, form) -> Response:
-        contract_manager = form.data.get("contract_manager")
-        if self.change_contract_manager(contract_manager, form.firm, form.office):
+        contract_manager_guid = form.data.get("contract_manager")
+        selected_manager = form.get_contract_manager_by_guid(contract_manager_guid)
+        display_name = selected_manager.get("name") if selected_manager else contract_manager_guid
+        if self.change_contract_manager(contract_manager_guid, form.firm, form.office):
             # Flash success
             flash(
-                f"<b>Contract manager for {form.office.firm_office_code} changed to {contract_manager}.</b>",
+                f"<b>Contract manager for {form.office.firm_office_code} changed to {display_name}.</b>",
                 category="success",
             )
         else:
@@ -374,12 +388,16 @@ class ChangeContractManagerFormView(BaseFormView):
 
     def skip_form(self, form) -> Response:
         # Set contract manager to be default
+        default_manager = next(
+            (manager for manager in form.contract_managers if manager.get("name") == DEFAULT_CONTRACT_MANAGER_NAME),
+            None,
+        )
         contract_manager = DEFAULT_CONTRACT_MANAGER_NAME
         value_changed = (
             contract_manager != form.office.contract_manager
             and form.office.contract_manager not in STATUS_CONTRACT_MANAGER_NAMES
         )
-        if self.change_contract_manager(contract_manager, form.firm, form.office):
+        if default_manager and self.change_contract_manager(default_manager.get("guid"), form.firm, form.office):
             if value_changed:
                 flash(
                     f"<b>Contract manager for {form.office.firm_office_code} removed.</b>",
@@ -407,9 +425,13 @@ class ChangeContractManagerFormView(BaseFormView):
 
         search_term = request.args.get("search", "").strip()
         page = int(request.args.get("page", 1))
-        form = self.get_form_class()(
-            firm, office, search_term=search_term, page=page, selected_value=selected_contract_manager
-        )
+        form = self.get_form_class()(firm, office, search_term=search_term, page=page)
+        if selected_contract_manager:
+            selected_manager = next(
+                (manager for manager in form.contract_managers if manager.get("name") == selected_contract_manager),
+                None,
+            )
+            form.selected_value = selected_manager.get("guid") if selected_manager else None
 
         if search_term:
             form.search.validate(form)

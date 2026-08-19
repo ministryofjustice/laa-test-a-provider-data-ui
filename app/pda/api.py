@@ -10,7 +10,7 @@ from urllib3 import Retry
 
 from app.constants import FirmType, YesNo
 from app.models import BankAccount, Contact, Firm, Office
-from app.pda.errors import ProviderDataApiError
+from app.pda.errors import ProviderDataApiError, ProviderDataApiHttpError
 
 
 class PDAError(ProviderDataApiError):
@@ -52,6 +52,7 @@ class ProviderDataApi:
         self.app = None
         self.base_url: Optional[str] = None
         self.session = requests.Session()
+        self.session.trust_env = False
         self.logger = logging.getLogger(__name__)
         self._initialized = False
         self._mock_fallback = None
@@ -179,6 +180,19 @@ class ProviderDataApi:
         """
         return self._make_request("PATCH", endpoint, json=json)
 
+    def post(self, endpoint: str, json: Dict[str, Any] = None) -> requests.Response:
+        """
+        Make a POST request to the specified endpoint.
+
+        Args:
+            endpoint: API endpoint path
+            json: Data to be sent as JSON
+
+        Returns:
+            requests.Response: The response object
+        """
+        return self._make_request("POST", endpoint, json=json)
+
     def _handle_response(
         self, response: requests.Response, empty_return: Union[Dict, List, None]
     ) -> Union[Dict, List, None]:
@@ -216,10 +230,20 @@ class ProviderDataApi:
         else:
             # Handle other HTTP errors
             self.logger.error(f"HTTP {response.status_code} error from {response.url}")
+            response_data = None
+            detail = None
+            try:
+                response_data = response.json()
+                if isinstance(response_data, dict):
+                    detail = response_data.get("detail") or response_data.get("title")
+                    if not detail and isinstance(response_data.get("error"), dict):
+                        detail = response_data["error"].get("errorCode")
+            except ValueError:
+                response_data = None
             try:
                 response.raise_for_status()
             except requests.HTTPError as e:
-                raise PDAError(f"HTTP error: {e}")
+                raise ProviderDataApiHttpError(response.status_code, detail or str(e), response_data) from e
 
     def _unwrap_data_envelope(self, data: Any) -> Any:
         """Return payload for both legacy and PDA-R2 style envelopes."""
@@ -259,7 +283,27 @@ class ProviderDataApi:
 
         # Legacy shape is already compatible with model aliases.
         if "firmId" in item or "firmName" in item:
-            return item
+            normalized = dict(item)
+            legal = normalized.get("legalServicesProvider") or {}
+
+            if "constitutionalStatus" not in normalized:
+                normalized["constitutionalStatus"] = legal.get("constitutionalStatus") or "N/A"
+
+            company_house_number = (
+                normalized.get("companyHouseNumber")
+                or normalized.get("companiesHouseNumber")
+                or legal.get("companyHouseNumber")
+                or legal.get("companiesHouseNumber")
+            )
+            if company_house_number and "companyHouseNumber" not in normalized:
+                normalized["companyHouseNumber"] = company_house_number
+
+            if "indemnityReceivedDate" not in normalized and legal.get("indemnityReceivedDate"):
+                normalized["indemnityReceivedDate"] = legal.get("indemnityReceivedDate")
+
+            # Legacy model expects companyHouseNumber; discard API alias variant.
+            normalized.pop("companiesHouseNumber", None)
+            return {k: v for k, v in normalized.items() if v is not None}
 
         firm_number = item.get("firmNumber")
         firm_type = item.get("firmType")
@@ -275,9 +319,18 @@ class ProviderDataApi:
         elif firm_type == "Barrister":
             solicitor_advocate = "No"
 
-        constitutional_status = legal.get("constitutionalStatus")
+        constitutional_status = legal.get("constitutionalStatus") or item.get("constitutionalStatus")
         if constitutional_status is None:
             constitutional_status = "N/A"
+
+        company_house_number = (
+            legal.get("companyHouseNumber")
+            or legal.get("companiesHouseNumber")
+            or item.get("companyHouseNumber")
+            or item.get("companiesHouseNumber")
+        )
+
+        indemnity_received_date = legal.get("indemnityReceivedDate") or item.get("indemnityReceivedDate")
 
         normalized = {
             "firmNumber": str(firm_number) if firm_number is not None else "",
@@ -290,8 +343,8 @@ class ProviderDataApi:
             "advocateLevel": advocate.get("advocateLevel"),
             "barCouncilRoll": advocate.get("barCouncilRollNumber")
             or advocate.get("solicitorRegulationAuthorityRollNumber"),
-            "companyHouseNumber": legal.get("companiesHouseNumber"),
-            "indemnityReceivedDate": legal.get("indemnityReceivedDate"),
+            "companyHouseNumber": company_house_number,
+            "indemnityReceivedDate": indemnity_received_date,
             "holdAllPaymentsFlag": "N",
             "nonProfitOrganisation": "N/A",
             "smallBusinessFlag": "N",
@@ -321,6 +374,7 @@ class ProviderDataApi:
         payment = item.get("payment") or {}
         vat_registration = item.get("vatRegistration") or {}
         intervened = item.get("intervened") or {}
+        contract_manager = item.get("contractManager") or {}
 
         hold_all_payments_flag = None
         if payment.get("paymentHeldFlag") is not None:
@@ -358,10 +412,76 @@ class ProviderDataApi:
             "holdAllPaymentsFlag": hold_all_payments_flag,
             "holdReason": payment.get("paymentHeldReason"),
             "debtRecoveryFlag": debt_recovery_flag,
+            "contractManager": " ".join(
+                part for part in [contract_manager.get("firstName"), contract_manager.get("lastName")] if part
+            )
+            or contract_manager.get("contractManagerId"),
+            "contract_manager_guid": contract_manager.get("guid"),
+            "contract_manager_id": contract_manager.get("contractManagerId"),
             "intervenedDate": intervened.get("intervenedChangeDate") if intervened.get("intervenedFlag") else None,
         }
 
         return {k: v for k, v in normalized.items() if v is not None}
+
+    def _get_primary_contract_manager_for_office(self, firm_id: int | str, office_code: str) -> Dict[str, Any] | None:
+        """Get the currently linked contract manager for an office, when available."""
+        response = self.get(f"/provider-firms/{firm_id}/offices/{office_code}/contract-managers")
+        raw_data = self._handle_response(response, [])
+        managers = self._extract_collection(raw_data, ["contractManagers"])
+        if not managers:
+            return None
+
+        linked_manager = next((m for m in managers if isinstance(m, dict) and m.get("linkedFlag") is True), None)
+        if linked_manager:
+            return linked_manager
+
+        first_manager = managers[0]
+        return first_manager if isinstance(first_manager, dict) else None
+
+    def _hydrate_office_contract_manager(self, firm_id: int | str, office: Office | None) -> Office | None:
+        """Backfill contract manager details from the dedicated endpoint when office payload omits them."""
+        if office is None or not office.firm_office_code:
+            return office
+
+        needs_name = not office.contract_manager or (
+            office.contract_manager_id is not None and office.contract_manager == office.contract_manager_id
+        )
+        needs_metadata = not office.contract_manager_guid or not office.contract_manager_id
+        if not needs_name and not needs_metadata:
+            return office
+
+        try:
+            manager = self._get_primary_contract_manager_for_office(firm_id, office.firm_office_code)
+        except PDAError as e:
+            self.logger.warning(
+                "Unable to enrich contract manager for firm %s office %s: %s",
+                firm_id,
+                office.firm_office_code,
+                e,
+            )
+            return office
+
+        if not manager:
+            return office
+
+        display_name = " ".join(part for part in [manager.get("firstName"), manager.get("lastName")] if part).strip()
+        if not display_name:
+            display_name = manager.get("contractManagerId")
+
+        updates = {}
+        if display_name and (not office.contract_manager or office.contract_manager == office.contract_manager_id):
+            updates["contract_manager"] = display_name
+
+        if manager.get("guid") and not office.contract_manager_guid:
+            updates["contract_manager_guid"] = manager.get("guid")
+
+        if manager.get("contractManagerId") and not office.contract_manager_id:
+            updates["contract_manager_id"] = manager.get("contractManagerId")
+
+        if not updates:
+            return office
+
+        return office.model_copy(update=updates)
 
     def _normalize_bank_account_data(self, item: Dict[str, Any], office_code: str) -> Dict[str, Any]:
         """Map PDA-R2 bank account DTOs to the legacy BankAccount model shape."""
@@ -407,7 +527,353 @@ class ProviderDataApi:
         """Raise a typed error for API features that are not yet supported."""
         raise PDACapabilityError(message)
 
-    def get_provider_firm(self, firm_id: int) -> Firm | None:
+    def _build_provider_create_payload(
+        self,
+        firm: Firm,
+        office: Office | None = None,
+        liaison_manager: Contact | None = None,
+        bank_account: BankAccount | None = None,
+        contract_manager_guid: str | None = None,
+    ) -> Dict[str, Any]:
+        if not isinstance(firm, Firm):
+            raise ValueError("firm must be a Firm instance")
+
+        payload: Dict[str, Any] = {
+            "name": firm.firm_name,
+            "firmType": "Advocate" if firm.is_barrister else firm.firm_type,
+        }
+
+        if firm.is_legal_services_provider:
+            legal_services_provider: Dict[str, Any] = {
+                "constitutionalStatus": firm.constitutional_status,
+            }
+            if office and liaison_manager:
+                legal_services_provider["address"] = {
+                    "line1": office.address_line_1,
+                    "townOrCity": office.city,
+                    "postcode": office.postcode,
+                }
+                optional_address = {
+                    "line2": office.address_line_2,
+                    "line3": office.address_line_3,
+                    "line4": office.address_line_4,
+                    "county": office.county,
+                }
+                for key, value in optional_address.items():
+                    if value:
+                        legal_services_provider["address"][key] = value
+
+                payment: Dict[str, Any] = {"paymentMethod": self._map_payment_method(office.payment_method)}
+                if bank_account and payment["paymentMethod"] == "EFT":
+                    payment["bankAccountDetails"] = {
+                        "accountName": bank_account.bank_account_name,
+                        "sortCode": bank_account.sort_code,
+                        "accountNumber": bank_account.account_number,
+                    }
+                legal_services_provider["payment"] = payment
+
+                legal_services_provider["liaisonManager"] = {
+                    "firstName": liaison_manager.first_name,
+                    "lastName": liaison_manager.last_name,
+                    "emailAddress": liaison_manager.email_address,
+                    "telephoneNumber": liaison_manager.telephone_number,
+                }
+                if contract_manager_guid:
+                    legal_services_provider["contractManager"] = {"contractManagerGUID": contract_manager_guid}
+                else:
+                    legal_services_provider["contractManager"] = None
+
+                optional_contact_fields = {
+                    "telephoneNumber": office.telephone_number,
+                    "emailAddress": office.email_address,
+                }
+                for key, value in optional_contact_fields.items():
+                    if value:
+                        legal_services_provider[key] = value
+
+                if office.dx_number and office.dx_centre:
+                    legal_services_provider["dxDetails"] = {
+                        "dxNumber": office.dx_number,
+                        "dxCentre": office.dx_centre,
+                    }
+
+                if office.vat_registration_number:
+                    legal_services_provider["vatRegistration"] = {
+                        "vatNumber": office.vat_registration_number,
+                    }
+            if firm.indemnity_received_date is not None:
+                legal_services_provider["indemnityReceivedDate"] = str(firm.indemnity_received_date)
+            if firm.company_house_number:
+                legal_services_provider["companiesHouseNumber"] = firm.company_house_number
+            payload["legalServicesProvider"] = legal_services_provider
+            return payload
+
+        if firm.is_chambers:
+            chambers: Dict[str, Any] = {}
+            if office and liaison_manager:
+                chambers["address"] = {
+                    "line1": office.address_line_1,
+                    "townOrCity": office.city,
+                    "postcode": office.postcode,
+                }
+                optional_address = {
+                    "line2": office.address_line_2,
+                    "line3": office.address_line_3,
+                    "line4": office.address_line_4,
+                    "county": office.county,
+                }
+                for key, value in optional_address.items():
+                    if value:
+                        chambers["address"][key] = value
+
+                chambers["liaisonManager"] = {
+                    "firstName": liaison_manager.first_name,
+                    "lastName": liaison_manager.last_name,
+                    "emailAddress": liaison_manager.email_address,
+                    "telephoneNumber": liaison_manager.telephone_number,
+                }
+                chambers["contractManager"] = None
+
+                optional_contact_fields = {
+                    "telephoneNumber": office.telephone_number,
+                    "emailAddress": office.email_address,
+                }
+                for key, value in optional_contact_fields.items():
+                    if value:
+                        chambers[key] = value
+
+                if liaison_manager.website:
+                    chambers["website"] = liaison_manager.website
+                if office.dx_number and office.dx_centre:
+                    chambers["dxDetails"] = {
+                        "dxNumber": office.dx_number,
+                        "dxCentre": office.dx_centre,
+                    }
+            payload["chambers"] = chambers
+            return payload
+
+        if firm.parent_firm_id <= 0:
+            raise PDAError("A parent chambers firm is required when creating an advocate or barrister")
+
+        practitioner: Dict[str, Any] = {
+            "advocateType": "Barrister" if firm.is_barrister else "Advocate",
+            "parentFirms": [{"parentFirmNumber": str(firm.parent_firm_id)}],
+            # Practitioner creation uses parent's chambers liaison manager.
+            "liaisonManager": {"useChambersLiaisonManager": True},
+            # Practitioner payload must include payment details; default to cheque/check.
+            "payment": {"paymentMethod": "CHECK"},
+        }
+
+        advocate_details: Dict[str, Any] = {}
+        if firm.advocate_level:
+            advocate_details["advocateLevel"] = firm.advocate_level
+        if firm.bar_council_roll:
+            roll_field = "barCouncilRollNumber" if firm.is_barrister else "solicitorRegulationAuthorityRollNumber"
+            advocate_details[roll_field] = firm.bar_council_roll
+        if advocate_details:
+            if firm.is_barrister:
+                practitioner["barrister"] = advocate_details
+            else:
+                practitioner["advocate"] = advocate_details
+
+        payload["practitioner"] = practitioner
+        return payload
+
+    def create_provider_firm(
+        self,
+        firm: Firm,
+        office: Office | None = None,
+        liaison_manager: Contact | None = None,
+        bank_account: BankAccount | None = None,
+        contract_manager_guid: str | None = None,
+    ) -> Firm:
+        payload = self._build_provider_create_payload(
+            firm,
+            office=office,
+            liaison_manager=liaison_manager,
+            bank_account=bank_account,
+            contract_manager_guid=contract_manager_guid,
+        )
+        response = self.post("/provider-firms", json=payload)
+        raw_data = self._handle_response(response, {})
+        payload_data = self._unwrap_data_envelope(raw_data)
+
+        if not isinstance(payload_data, dict):
+            raise PDAError("Invalid create provider response payload")
+
+        provider_identifier = payload_data.get("providerFirmNumber") or payload_data.get("providerFirmGUID")
+        if not provider_identifier:
+            raise PDAError("Create provider response did not include a provider identifier")
+
+        # PDA-R2 can omit persisting top-level LSP details on create when submitting the
+        # nested onboarding payload. Apply a follow-up patch to guarantee these values.
+        if firm.is_legal_services_provider and office is not None:
+            lsp_details_patch: Dict[str, Any] = {}
+            if firm.constitutional_status and firm.constitutional_status != "N/A":
+                lsp_details_patch["constitutionalStatus"] = firm.constitutional_status
+            if firm.indemnity_received_date not in (None, ""):
+                lsp_details_patch["indemnityReceivedDate"] = str(firm.indemnity_received_date)
+            if firm.company_house_number:
+                lsp_details_patch["companiesHouseNumber"] = firm.company_house_number
+
+            if lsp_details_patch:
+                try:
+                    patch_response = self.patch(
+                        f"/provider-firms/{provider_identifier}",
+                        json={"legalServicesProvider": lsp_details_patch},
+                    )
+                    self._handle_response(patch_response, {})
+                except ProviderDataApiHttpError as e:
+                    self.logger.warning(
+                        "Post-create LSP details patch failed for provider %s (status=%s): %s",
+                        provider_identifier,
+                        e.status_code,
+                        e,
+                    )
+
+        created_firm = self.get_provider_firm(str(provider_identifier))
+        if not created_firm:
+            raise PDAError(f"Created provider {provider_identifier} could not be retrieved")
+        return created_firm
+
+    @staticmethod
+    def _map_payment_method(payment_method: str | None) -> str:
+        mapping = {
+            "electronic": "EFT",
+            "eft": "EFT",
+            "cheque": "CHECK",
+            "check": "CHECK",
+        }
+        normalized = (payment_method or "CHECK").strip().lower()
+        return mapping.get(normalized, payment_method or "CHECK")
+
+    def _find_contract_manager_by_name(self, name: str) -> Dict[str, Any] | None:
+        if not name:
+            return None
+        normalized_name = name.strip().lower()
+        for manager in self.get_list_of_contract_manager_names():
+            if manager.get("name", "").strip().lower() == normalized_name:
+                return manager
+        return None
+
+    def _build_provider_office_create_payload(
+        self,
+        office: Office,
+        liaison_manager: Contact,
+        contract_manager_guid: str | None = None,
+    ) -> Dict[str, Any]:
+        if not contract_manager_guid and office.contract_manager_guid:
+            contract_manager_guid = office.contract_manager_guid
+        if not contract_manager_guid and office.contract_manager:
+            manager = self._find_contract_manager_by_name(office.contract_manager)
+            contract_manager_guid = manager.get("guid") if manager else None
+
+        payload: Dict[str, Any] = {
+            "address": {
+                "line1": office.address_line_1,
+                "townOrCity": office.city,
+                "postcode": office.postcode,
+            },
+            "payment": {"paymentMethod": self._map_payment_method(office.payment_method)},
+            "liaisonManager": {
+                "firstName": liaison_manager.first_name,
+                "lastName": liaison_manager.last_name,
+                "emailAddress": liaison_manager.email_address,
+                "telephoneNumber": liaison_manager.telephone_number,
+            },
+            "contractManager": {"contractManagerGUID": contract_manager_guid} if contract_manager_guid else {},
+        }
+
+        optional_address = {
+            "line2": office.address_line_2,
+            "line3": office.address_line_3,
+            "line4": office.address_line_4,
+            "county": office.county,
+        }
+        for key, value in optional_address.items():
+            if value:
+                payload["address"][key] = value
+
+        optional_office = {
+            "telephoneNumber": office.telephone_number,
+            "emailAddress": office.email_address,
+        }
+        for key, value in optional_office.items():
+            if value:
+                payload[key] = value
+
+        if office.dx_number and office.dx_centre:
+            payload["dxDetails"] = {"dxNumber": office.dx_number, "dxCentre": office.dx_centre}
+
+        return payload
+
+    def _get_provider_office_for_firm(self, firm_id: int | str, office_code: str) -> Office | None:
+        response = self.get(f"/provider-firms/{firm_id}/offices/{office_code}")
+        raw_data = self._handle_response(response, None)
+        if raw_data is None:
+            return None
+        try:
+            payload = self._unwrap_data_envelope(raw_data)
+            office = payload.get("office", payload) if isinstance(payload, dict) else payload
+            office = self._normalize_office_data(office)
+            normalized_office = Office(**office)
+            return self._hydrate_office_contract_manager(firm_id, normalized_office)
+        except ValidationError as e:
+            self.logger.error(f"Invalid office data from API for office {office_code}: {e}")
+            raise PDAError(f"Invalid office data: {e}")
+
+    def create_provider_office(
+        self,
+        office: Office,
+        firm_id: int,
+        liaison_manager: Contact | None = None,
+        contract_manager_guid: str | None = None,
+    ) -> Office:
+        if not isinstance(firm_id, int) or firm_id <= 0:
+            raise ValueError("firm_id must be a positive integer")
+        if liaison_manager is None:
+            raise PDAError("liaison_manager is required to create an office with the real Provider Data API")
+
+        payload = self._build_provider_office_create_payload(office, liaison_manager, contract_manager_guid)
+        response = self.post(f"/provider-firms/{firm_id}/offices", json=payload)
+        raw_data = self._handle_response(response, {})
+        payload_data = self._unwrap_data_envelope(raw_data)
+        if not isinstance(payload_data, dict):
+            raise PDAError("Invalid create office response payload")
+
+        office_code = payload_data.get("officeCode")
+        provider_identifier = payload_data.get("providerFirmNumber") or payload_data.get("providerFirmGUID") or firm_id
+        if not office_code:
+            raise PDAError("Create office response did not include an office code")
+
+        created_office = self._get_provider_office_for_firm(provider_identifier, office_code)
+        if not created_office:
+            raise PDAError(f"Created office {office_code} could not be retrieved")
+        return created_office
+
+    def get_liaison_manager(self, liaison_manager_guid: str) -> Contact:
+        if not liaison_manager_guid or not isinstance(liaison_manager_guid, str):
+            raise ValueError("liaison_manager_guid must be a non-empty string")
+
+        response = self.get(f"/provider-liaison-managers/{liaison_manager_guid}")
+        raw_data = self._handle_response(response, {})
+        payload = self._unwrap_data_envelope(raw_data)
+        if not isinstance(payload, dict):
+            raise PDAError("Invalid liaison manager response payload")
+
+        return Contact(
+            vendorSiteId=1,
+            firstName=payload.get("firstName") or "",
+            lastName=payload.get("lastName") or "",
+            emailAddress=payload.get("emailAddress") or "unknown@example.com",
+            telephoneNumber=payload.get("telephoneNumber"),
+            website=None,
+            jobTitle="Liaison manager",
+            primary="Y",
+            activeFrom=payload.get("activeDateFrom"),
+        )
+
+    def get_provider_firm(self, firm_id: int | str) -> Firm | None:
         """
         Get details for a specific provider firm.
 
@@ -417,8 +883,14 @@ class ProviderDataApi:
         Returns:
             Firm model instance, or None if not found
         """
-        if not isinstance(firm_id, int) or firm_id <= 0:
-            raise ValueError("firm_id must be a positive integer")
+        if isinstance(firm_id, int):
+            if firm_id <= 0:
+                raise ValueError("firm_id must be a positive integer or non-empty string")
+        elif isinstance(firm_id, str):
+            if not firm_id.strip():
+                raise ValueError("firm_id must be a positive integer or non-empty string")
+        else:
+            raise ValueError("firm_id must be a positive integer or non-empty string")
 
         response = self.get(f"/provider-firms/{firm_id}")
         raw_data = self._handle_response(response, None)
@@ -460,6 +932,25 @@ class ProviderDataApi:
         except ValidationError as e:
             self.logger.error(f"Invalid firms data from API: {e}")
             raise PDAError(f"Invalid firms data: {e}")
+
+    def provider_name_exists(self, name: str) -> bool:
+        if not name or not isinstance(name, str):
+            return False
+
+        response = self.get("/provider-firms", params={"name": name})
+        raw_data = self._handle_response(response, [])
+        firms = self._extract_collection(raw_data, ["firms", "providerFirms"])
+        normalized_name = re.sub(r"[^a-z0-9]", "", name.strip().lower())
+
+        for firm in firms:
+            candidate = firm.get("name") or firm.get("firmName")
+            if not candidate:
+                continue
+            normalized_candidate = re.sub(r"[^a-z0-9]", "", str(candidate).strip().lower())
+            if normalized_candidate == normalized_name:
+                return True
+
+        return False
 
     def get_provider_office(self, office_code: str) -> Office | None:
         """
@@ -545,11 +1036,11 @@ class ProviderDataApi:
             # Child offices have headOffice = parent's office ID
             # Head offices have headOffice = "N/A"
             if office.head_office == "N/A":
-                return office
+                return self._hydrate_office_contract_manager(firm_id, office)
 
         # Some backends don't explicitly mark head office for single-office firms.
         if len(offices) == 1:
-            return offices[0]
+            return self._hydrate_office_contract_manager(firm_id, offices[0])
 
         return None
 
@@ -768,7 +1259,32 @@ class ProviderDataApi:
         Raises:
             NotImplementedError: This functionality is not yet supported by the real API
         """
-        self._unsupported("Creating office contacts is not yet supported by the real Provider Data API")
+        if not isinstance(firm_id, int) or firm_id <= 0:
+            raise ValueError("firm_id must be a positive integer")
+        if not office_code or not isinstance(office_code, str):
+            raise ValueError("office_code must be a non-empty string")
+
+        payload = {
+            "firstName": contact.first_name,
+            "lastName": contact.last_name,
+            "emailAddress": contact.email_address,
+            "telephoneNumber": contact.telephone_number,
+        }
+        response = self.post(f"/provider-firms/{firm_id}/offices/{office_code}/liaison-managers", json=payload)
+        raw_data = self._handle_response(response, {})
+        payload_data = self._unwrap_data_envelope(raw_data)
+        if not isinstance(payload_data, dict):
+            raise PDAError("Invalid create liaison manager response payload")
+
+        liaison_manager_guid = payload_data.get("liaisonManagerGUID")
+        if not liaison_manager_guid:
+            raise PDAError("Create liaison manager response did not include a liaison manager GUID")
+
+        created_contact = self.get_liaison_manager(liaison_manager_guid)
+        office = self.get_provider_office(office_code)
+        if office and office.firm_office_id > 0:
+            created_contact = created_contact.model_copy(update={"vendor_site_id": office.firm_office_id})
+        return created_contact
 
     def update_contact(self, firm_id: int, office_code: str, contact: Contact) -> Contact:
         """
@@ -948,9 +1464,42 @@ class ProviderDataApi:
 
     def get_list_of_contract_manager_names(self):
         """Get a list of all known contract managers."""
-        self._unsupported(
-            "Getting list of known contract managers is currently not supported by the real API - see https://dsdmoj.atlassian.net/wiki/spaces/laagetaccess/pages/5912559872/Contract+Manager+list"
+        response = self.get("/provider-contract-managers")
+        raw_data = self._handle_response(response, [])
+        managers = self._extract_collection(raw_data, ["contractManagers"])
+
+        results = []
+        for manager in managers:
+            first_name = manager.get("firstName") or ""
+            last_name = manager.get("lastName") or ""
+            results.append(
+                {
+                    "guid": manager.get("guid"),
+                    "contractManagerId": manager.get("contractManagerId"),
+                    "name": " ".join(part for part in [first_name, last_name] if part).strip()
+                    or manager.get("contractManagerId")
+                    or "Unknown contract manager",
+                }
+            )
+        return results
+
+    def assign_contract_manager_to_office(self, firm_id: int, office_code: str, contract_manager_guid: str) -> Office:
+        if not isinstance(firm_id, int) or firm_id <= 0:
+            raise ValueError("firm_id must be a positive integer")
+        if not office_code or not isinstance(office_code, str):
+            raise ValueError("office_code must be a non-empty string")
+        if not contract_manager_guid or not isinstance(contract_manager_guid, str):
+            raise ValueError("contract_manager_guid must be a non-empty string")
+
+        response = self.post(
+            f"/provider-firms/{firm_id}/offices/{office_code}/contract-managers",
+            json={"contractManagerGUID": contract_manager_guid},
         )
+        self._handle_response(response, {})
+        office = self._get_provider_office_for_firm(firm_id, office_code)
+        if not office:
+            raise PDAError(f"Office {office_code} not found for firm {firm_id}")
+        return office
 
     def update_office_debt_recovery(self, firm_id: int, office_code: str, data: dict | YesNo) -> Office:
         """

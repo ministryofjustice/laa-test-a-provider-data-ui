@@ -1,11 +1,14 @@
+from unittest.mock import Mock
+
 import pytest
 from flask import get_flashed_messages, session
 from werkzeug.datastructures import MultiDict
 
-from app.main.add_a_new_provider.forms import LiaisonManagerForm
+from app.main.add_a_new_provider.forms import AddProviderForm, LiaisonManagerForm
 from app.main.utils import add_new_provider, create_provider_from_session
 from app.models import Firm
 from app.pda.api import ProviderDataApi
+from app.pda.errors import ProviderDataApiHttpError
 from app.pda.mock_api import MockProviderDataApi
 
 
@@ -49,17 +52,33 @@ class TestAddNewProvider:
             with pytest.raises(RuntimeError, match="Provider Data API not initialized"):
                 add_new_provider(firm)
 
-    def test_add_new_provider_unsupported_api(self, app):
-        """Test error when using real PDA (not mock)."""
+    def test_add_new_provider_non_mock_adapter(self, app):
+        """Test add_new_provider delegates to a non-mock PDA adapter."""
         with app.app_context():
-            # Replace mock PDA with real PDA
             real_pda = ProviderDataApi()
+            real_pda.create_provider_firm = Mock(
+                return_value=Firm(
+                    firmName="TEST FIRM",
+                    firmType="Legal Services Provider",
+                    constitutionalStatus="Partnership",
+                    firmId=123,
+                    firmNumber="123",
+                )
+            )
             app.extensions["pda"] = real_pda
 
             firm = Firm(firm_name="TEST FIRM", firm_type="Legal Services Provider")
 
-            with pytest.raises(RuntimeError, match="Provider Data API does not support this functionality yet"):
-                add_new_provider(firm)
+            result = add_new_provider(firm)
+
+            real_pda.create_provider_firm.assert_called_once_with(
+                firm,
+                office=None,
+                liaison_manager=None,
+                bank_account=None,
+                contract_manager_guid=None,
+            )
+            assert result.firm_id == 123
 
     def test_add_new_provider_preserves_firm_data(self, app):
         """Test that all firm data is preserved during creation."""
@@ -113,6 +132,19 @@ class TestAddNewProvider:
         form.validate()
         assert "email_address" not in form.errors
 
+    def test_add_provider_form_duplicate_name_validation(self, app):
+        with app.test_request_context():
+            pda = app.extensions["pda"]
+            pda.provider_name_exists = Mock(return_value=True)
+
+            form = AddProviderForm(
+                meta={"csrf": False},
+                formdata=MultiDict({"provider_name": "Duplicate Firm", "provider_type": "Legal Services Provider"}),
+            )
+
+            assert form.validate() is False
+            assert form.provider_name.errors == ["A provider named Duplicate Firm already exists"]
+
 
 class TestCreateProviderFromSession:
     @pytest.fixture(autouse=True)
@@ -152,6 +184,89 @@ class TestCreateProviderFromSession:
 
             # Verify session was cleaned up
             assert "new_provider" not in session
+
+    def test_create_provider_from_session_non_mock_uses_nested_provider_create(self, app):
+        with app.test_request_context():
+            real_pda = ProviderDataApi()
+            real_pda.create_provider_firm = Mock(
+                return_value=Firm(
+                    firmName="Nested Test Firm",
+                    firmType="Legal Services Provider",
+                    constitutionalStatus="Limited Company",
+                    firmId=999,
+                    firmNumber="999",
+                )
+            )
+            app.extensions["pda"] = real_pda
+
+            session["new_provider"] = {
+                "firm_name": "Nested Test Firm",
+                "firm_type": "Legal Services Provider",
+                "constitutional_status": "Limited Company",
+            }
+            session["new_head_office"] = {
+                "address_line_1": "123 Test Street",
+                "city": "Test City",
+                "postcode": "TE1 5ST",
+                "telephone_number": "01234567890",
+                "email_address": "test@example.com",
+                "payment_method": "Cheque",
+                "contract_manager_guid": "cm-guid-001",
+            }
+            session["new_liaison_manager"] = {
+                "first_name": "Test",
+                "last_name": "User",
+                "email_address": "test.user@example.com",
+                "telephone_number": "01234567890",
+                "job_title": "Liaison manager",
+                "primary": "Y",
+            }
+
+            result = create_provider_from_session()
+
+            assert result.firm_id == 999
+            real_pda.create_provider_firm.assert_called_once()
+            _, kwargs = real_pda.create_provider_firm.call_args
+            assert kwargs["office"].address_line_1 == "123 Test Street"
+            assert kwargs["liaison_manager"].first_name == "Test"
+            assert kwargs["contract_manager_guid"] == "cm-guid-001"
+            assert "new_provider" not in session
+            assert "new_head_office" not in session
+            assert "new_liaison_manager" not in session
+
+    def test_create_provider_from_session_non_mock_failure_preserves_session(self, app):
+        with app.test_request_context():
+            real_pda = ProviderDataApi()
+            real_pda.create_provider_firm = Mock(side_effect=ProviderDataApiHttpError(409, "Conflict"))
+            app.extensions["pda"] = real_pda
+
+            session["new_provider"] = {
+                "firm_name": "Duplicate Firm",
+                "firm_type": "Legal Services Provider",
+                "constitutional_status": "Limited Company",
+            }
+            session["new_head_office"] = {
+                "address_line_1": "123 Test Street",
+                "city": "Test City",
+                "postcode": "TE1 5ST",
+                "payment_method": "Cheque",
+                "contract_manager_guid": "cm-guid-001",
+            }
+            session["new_liaison_manager"] = {
+                "first_name": "Test",
+                "last_name": "User",
+                "email_address": "test.user@example.com",
+                "telephone_number": "01234567890",
+                "job_title": "Liaison manager",
+                "primary": "Y",
+            }
+
+            with pytest.raises(ProviderDataApiHttpError):
+                create_provider_from_session()
+
+            assert session["new_provider"]["firm_name"] == "Duplicate Firm"
+            assert session["new_head_office"]["address_line_1"] == "123 Test Street"
+            assert session["new_liaison_manager"]["first_name"] == "Test"
 
     def test_create_provider_from_session_with_office(self, app):
         """Test creating provider with firm and office data in session."""

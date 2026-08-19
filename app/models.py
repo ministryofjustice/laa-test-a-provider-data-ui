@@ -117,6 +117,8 @@ class Office(BaseModel):
     hold_reason: str | None = Field(alias="holdReason", min_length=1, default=None)
     debt_recovery_flag: YesNo = Field(alias="debtRecoveryFlag", default=None)
     contract_manager: str | None = Field(alias="contractManager", default=None)
+    contract_manager_guid: str | None = Field(default=None, exclude=True)
+    contract_manager_id: str | None = Field(default=None, exclude=True)
     intervened_date: date | None = Field(alias="intervenedDate", default=None)
 
     is_head_office: Optional[bool] = Field(

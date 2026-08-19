@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from app.constants import FirmType
 from app.models import BankAccount, Contact, Firm, Office
 from app.pda.errors import ProviderDataApiError
+from app.utils.formatting import normalize_for_search
 
 
 class MockPDAError(ProviderDataApiError):
@@ -430,7 +431,14 @@ class MockProviderDataApi:
             self.logger.error(f"Invalid office data in mock after payment method update for office {office_code}: {e}")
             raise MockPDAError(f"Invalid office data: {e}")
 
-    def create_provider_firm(self, firm: Firm) -> Firm:
+    def create_provider_firm(
+        self,
+        firm: Firm,
+        office: Office | None = None,
+        liaison_manager: Contact | None = None,
+        bank_account: BankAccount | None = None,
+        contract_manager_guid: str | None = None,
+    ) -> Firm:
         """
         Create a new provider firm in the mock data.
 
@@ -454,7 +462,13 @@ class MockProviderDataApi:
 
         return updated_firm
 
-    def create_provider_office(self, office: Office, firm_id: int) -> Office:
+    def create_provider_office(
+        self,
+        office: Office,
+        firm_id: int,
+        liaison_manager: Contact | None = None,
+        contract_manager_guid: str | None = None,
+    ) -> Office:
         """
         Create a new provider office in the mock data.
 
@@ -857,19 +871,45 @@ class MockProviderDataApi:
     def get_list_of_contract_manager_names(self):
         # Static list of 12 fake contract managers
         return [
-            {"name": "Alice Johnson"},
-            {"name": "Robert Smith"},
-            {"name": "Sarah Wilson"},
-            {"name": "Michael Brown"},
-            {"name": "Emma Davis"},
-            {"name": "Lewis Green"},
-            {"name": "Olivia Garcia"},
-            {"name": "William Martinez"},
-            {"name": "Sophia Anderson"},
-            {"name": "David Taylor"},
-            {"name": "Isabella Thomas"},
-            {"name": "Christopher Lee"},
+            {"guid": "cm-guid-001", "contractManagerId": "CM001", "name": "Alice Johnson"},
+            {"guid": "cm-guid-002", "contractManagerId": "CM002", "name": "Robert Smith"},
+            {"guid": "cm-guid-003", "contractManagerId": "CM003", "name": "Sarah Wilson"},
+            {"guid": "cm-guid-004", "contractManagerId": "CM004", "name": "Michael Brown"},
+            {"guid": "cm-guid-005", "contractManagerId": "CM005", "name": "Emma Davis"},
+            {"guid": "cm-guid-006", "contractManagerId": "CM006", "name": "Lewis Green"},
+            {"guid": "cm-guid-007", "contractManagerId": "CM007", "name": "Olivia Garcia"},
+            {"guid": "cm-guid-008", "contractManagerId": "CM008", "name": "William Martinez"},
+            {"guid": "cm-guid-009", "contractManagerId": "CM009", "name": "Sophia Anderson"},
+            {"guid": "cm-guid-010", "contractManagerId": "CM010", "name": "David Taylor"},
+            {"guid": "cm-guid-011", "contractManagerId": "CM011", "name": "Isabella Thomas"},
+            {"guid": "cm-guid-012", "contractManagerId": "CM012", "name": "Christopher Lee"},
         ]
+
+    def provider_name_exists(self, name: str) -> bool:
+        if not name or not isinstance(name, str):
+            return False
+
+        normalized_name = normalize_for_search(name)
+        for firm in self._mock_data["firms"]:
+            candidate = firm.get("firmName") or firm.get("name")
+            if candidate and normalize_for_search(candidate) == normalized_name:
+                return True
+        return False
+
+    def assign_contract_manager_to_office(self, firm_id: int, office_code: str, contract_manager_guid: str) -> Office:
+        office_data = self._find_office_data(firm_id, office_code)
+        if office_data is None:
+            raise MockPDAError(f"Office {office_code} not found for firm {firm_id}")
+
+        selected = next(
+            (item for item in self.get_list_of_contract_manager_names() if item.get("guid") == contract_manager_guid),
+            None,
+        )
+        if not selected:
+            raise MockPDAError(f"Contract manager {contract_manager_guid} not found")
+
+        office_data["contractManager"] = selected["name"]
+        return Office(**_clean_data(office_data))
 
     def update_office_debt_recovery(self, firm_id: int, office_code: str, data: dict) -> Office:
         office_data = self._find_office_data(firm_id, office_code)

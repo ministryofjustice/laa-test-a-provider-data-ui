@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, List, Literal, NoReturn
 
-from flask import abort, current_app, redirect, render_template, request, url_for
+from flask import abort, current_app, flash, redirect, render_template, request, url_for
 from flask.views import MethodView
 
 from app.components.tables import DataTable, SummaryList, TableStructureItem
@@ -18,6 +18,7 @@ from app.main.table_builders import (
 )
 from app.main.utils import create_provider_from_session, firm_office_url_for, get_firm_tags, get_office_tags
 from app.models import Firm, Office
+from app.pda.errors import ProviderDataApiError, ProviderDataApiHttpError
 from app.utils.formatting import (
     format_office_address_multi_line_html,
     format_office_address_one_line,
@@ -292,8 +293,27 @@ class ViewProvider(MethodView):
 
     def get(self, firm: Firm | None = None):
         if not firm:
-            if created_firm := create_provider_from_session():
-                return redirect(url_for("main.view_provider", firm=created_firm))
+            from flask import session
+
+            try:
+                if created_firm := create_provider_from_session():
+                    return redirect(url_for("main.view_provider", firm=created_firm))
+            except ProviderDataApiHttpError as e:
+                provider_name = session.get("new_provider", {}).get("firm_name", "this provider")
+                if e.status_code == 409:
+                    flash(f"<b>{provider_name} already exists.</b> Change the provider name and try again.", "error")
+                else:
+                    flash("Unable to create provider with the configured backend", "error")
+
+                provider_type = session.get("new_provider", {}).get("firm_type")
+                if provider_type == "Legal Services Provider" and session.get("new_head_office"):
+                    return redirect(url_for("main.assign_contract_manager"))
+                if provider_type == "Chambers" and session.get("new_head_office"):
+                    return redirect(url_for("main.add_liaison_manager"))
+                return redirect(url_for("main.add_parent_provider"))
+            except ProviderDataApiError:
+                flash("Unable to create provider with the configured backend", "error")
+                return redirect(url_for("main.add_parent_provider"))
             abort(404)
 
         context = self.get_context(firm)

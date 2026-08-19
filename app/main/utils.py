@@ -49,17 +49,27 @@ def provider_name_html(provider: Firm | dict):
     return f"<a class='govuk-link', href={url_for('main.view_provider', firm=_firm_id)}>{_firm_name}</a>"
 
 
-def add_new_provider(firm: Firm, show_success_message: bool = True) -> Firm:
-    """Adds a new provider to the PDA, currently only the mock PDA supports this functionality."""
+def add_new_provider(
+    firm: Firm,
+    show_success_message: bool = True,
+    office: Office | None = None,
+    liaison_manager: Contact | None = None,
+    bank_account: BankAccount | None = None,
+    contract_manager_guid: str | None = None,
+) -> Firm:
+    """Adds a new provider to the configured PDA adapter."""
 
     pda = current_app.extensions.get("pda")
     if not pda:
         raise RuntimeError("Provider Data API not initialized")
 
-    if not isinstance(pda, MockProviderDataApi):
-        raise RuntimeError("Provider Data API does not support this functionality yet.")
-
-    new_firm: Firm = pda.create_provider_firm(firm)
+    new_firm: Firm = pda.create_provider_firm(
+        firm,
+        office=office,
+        liaison_manager=liaison_manager,
+        bank_account=bank_account,
+        contract_manager_guid=contract_manager_guid,
+    )
 
     if show_success_message:
         firm_type: str = new_firm.firm_type.lower()
@@ -68,17 +78,25 @@ def add_new_provider(firm: Firm, show_success_message: bool = True) -> Firm:
     return new_firm
 
 
-def add_new_office(office: Office, firm_id: int, show_success_message: bool = True) -> Office:
-    """Adds a new office to the PDA, currently only the mock PDA supports this functionality."""
+def add_new_office(
+    office: Office,
+    firm_id: int,
+    show_success_message: bool = True,
+    liaison_manager: Contact | None = None,
+    contract_manager_guid: str | None = None,
+) -> Office:
+    """Adds a new office to the configured PDA adapter."""
 
     pda = current_app.extensions.get("pda")
     if not pda:
         raise RuntimeError("Provider Data API not initialized")
 
-    if not isinstance(pda, MockProviderDataApi):
-        raise RuntimeError("Provider Data API does not support this functionality yet.")
-
-    new_office = pda.create_provider_office(office, firm_id=firm_id)
+    new_office = pda.create_provider_office(
+        office,
+        firm_id=firm_id,
+        liaison_manager=liaison_manager,
+        contract_manager_guid=contract_manager_guid,
+    )
 
     if show_success_message:
         flash(f"<b>New office {new_office.firm_office_code} successfully created</b>", "success")
@@ -107,14 +125,11 @@ def add_new_bank_account(
 
 
 def add_new_contact(contact: Contact, firm_id: int, office_code: str, show_success_message: bool = True) -> Contact:
-    """Adds a new contact to an office in the PDA, currently only the mock PDA supports this functionality."""
+    """Adds a new contact to an office in the configured PDA adapter."""
 
     pda = current_app.extensions.get("pda")
     if not pda:
         raise RuntimeError("Provider Data API not initialized")
-
-    if not isinstance(pda, MockProviderDataApi):
-        raise RuntimeError("Provider Data API does not support this functionality yet.")
 
     new_contact = pda.create_office_contact(firm_id, office_code, contact)
 
@@ -220,17 +235,59 @@ def create_provider_from_session() -> Firm | None:
     if not firm_data:
         return None
 
-    # Clean up session and create firm
-    del session["new_provider"]
+    pda = current_app.extensions.get("pda")
+
+    office_data = session.get("new_head_office")
+    liaison_manager_data = session.get("new_liaison_manager")
+    bank_account_data = session.get("new_head_office_bank_account")
+
+    if not isinstance(pda, MockProviderDataApi):
+        if not office_data:
+            firm = add_new_provider(Firm(**firm_data))
+            del session["new_provider"]
+            return firm
+
+        office = Office(**office_data)
+        liaison_manager = Contact(**liaison_manager_data) if liaison_manager_data else None
+        bank_account = BankAccount(**bank_account_data) if bank_account_data else None
+        contract_manager_guid = office_data.get("contract_manager_guid")
+        firm = add_new_provider(
+            Firm(**firm_data),
+            office=office,
+            liaison_manager=liaison_manager,
+            bank_account=bank_account,
+            contract_manager_guid=contract_manager_guid,
+        )
+
+        del session["new_provider"]
+
+        if "new_head_office" in session:
+            del session["new_head_office"]
+        if "new_head_office_bank_account" in session:
+            del session["new_head_office_bank_account"]
+        if "new_liaison_manager" in session:
+            del session["new_liaison_manager"]
+
+        return firm
+
     firm = add_new_provider(Firm(**firm_data))
+    del session["new_provider"]
 
     # Create head office if data exists
     if office_data := session.get("new_head_office"):
         del session["new_head_office"]
 
         # Create the office
+        liaison_manager_data = session.get("new_liaison_manager")
+        liaison_manager = Contact(**liaison_manager_data) if liaison_manager_data else None
+        contract_manager_guid = office_data.get("contract_manager_guid")
+
         new_office = add_new_office(
-            Office(**office_data), firm_id=firm.firm_id, show_success_message=False
+            Office(**office_data),
+            firm_id=firm.firm_id,
+            show_success_message=False,
+            liaison_manager=liaison_manager,
+            contract_manager_guid=contract_manager_guid,
         )  # Don't show success message as head office is created at the same time as the provider.
 
         # Create bank account if data exists in separate session key
@@ -249,13 +306,14 @@ def create_provider_from_session() -> Firm | None:
         if liaison_manager_data := session.get("new_liaison_manager"):
             del session["new_liaison_manager"]
 
-            contact = Contact(**liaison_manager_data)
-            add_new_contact(
-                contact,
-                firm_id=firm.firm_id,
-                office_code=new_office.firm_office_code,
-                show_success_message=False,
-            )
+            if isinstance(pda, MockProviderDataApi):
+                contact = Contact(**liaison_manager_data)
+                add_new_contact(
+                    contact,
+                    firm_id=firm.firm_id,
+                    office_code=new_office.firm_office_code,
+                    show_success_message=False,
+                )
 
     return firm
 

@@ -299,11 +299,28 @@ class AssignContractManagerFormView(BaseFormView):
     success_endpoint = "main.create_provider"
 
     def form_valid(self, form):
-        session.get("new_head_office").update({"contract_manager": form.data.get("contract_manager")})
+        selected_manager = form.get_contract_manager_by_guid(form.data.get("contract_manager"))
+        session.get("new_head_office").update(
+            {
+                "contract_manager": selected_manager.get("name")
+                if selected_manager
+                else form.data.get("contract_manager"),
+                "contract_manager_guid": selected_manager.get("guid") if selected_manager else None,
+            }
+        )
         return super().form_valid(form)
 
     def skip_form(self, form):
-        session.get("new_head_office").update({"contract_manager": DEFAULT_CONTRACT_MANAGER_NAME})
+        default_manager = next(
+            (manager for manager in form.contract_managers if manager.get("name") == DEFAULT_CONTRACT_MANAGER_NAME),
+            None,
+        )
+        session.get("new_head_office").update(
+            {
+                "contract_manager": DEFAULT_CONTRACT_MANAGER_NAME,
+                "contract_manager_guid": default_manager.get("guid") if default_manager else None,
+            }
+        )
         return super().form_valid(form)
 
     @staticmethod
