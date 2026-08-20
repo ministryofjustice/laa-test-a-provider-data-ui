@@ -13,6 +13,18 @@ def navigate_to_lsp_details(page: Page):
 
 
 @pytest.mark.usefixtures("live_server")
+def test_duplicate_provider_name_shows_error_on_first_step(page: Page):
+    page.goto(url_for("main.add_parent_provider", _external=True))
+    page.get_by_role("textbox", name="Provider name").fill("Smith & Partners Solicitors")
+    page.get_by_role("radio", name="Legal services provider").click()
+    page.get_by_role("button", name="Continue").click()
+
+    expect(page.get_by_text("Error: A provider named Smith & Partners Solicitors already exists")).to_be_visible()
+    expect(page.get_by_role("heading", name="Add a new parent provider")).to_be_visible()
+    expect(page.get_by_role("textbox", name="Provider name")).to_have_value("Smith & Partners Solicitors")
+
+
+@pytest.mark.usefixtures("live_server")
 def test_lsp_details_page_loads_via_ui(page: Page):
     """Test that the LSP details page loads correctly via UI navigation."""
     navigate_to_lsp_details(page)

@@ -5,6 +5,7 @@ import requests
 
 from app.models import Contact, Firm, Office
 from app.pda.api import PDAConnectionError, PDAError, ProviderDataApi
+from app.pda.errors import ProviderDataApiHttpError
 
 
 class TestProviderDataApi:
@@ -72,6 +73,14 @@ class TestProviderDataApi:
         with pytest.raises(PDAError):
             initialized_client._make_request("GET", "/test")
 
+    def test_post(self, initialized_client):
+        mock_response = Mock()
+        initialized_client.session.request = Mock(return_value=mock_response)
+
+        result = initialized_client.post("/test", json={"name": "Firm"})
+
+        assert result == mock_response
+
     def test_handle_response_200(self, initialized_client):
         mock_response = Mock()
         mock_response.status_code = 200
@@ -102,7 +111,7 @@ class TestProviderDataApi:
         mock_response.status_code = 500
         mock_response.raise_for_status.side_effect = requests.HTTPError("Server Error")
 
-        with pytest.raises(PDAError):
+        with pytest.raises(ProviderDataApiHttpError):
             initialized_client._handle_response(mock_response, {})
 
     def test_get_provider_firm_success(self, initialized_client):
@@ -131,9 +140,425 @@ class TestProviderDataApi:
         initialized_client.get.assert_called_once_with("/provider-firms/123")
         assert result == Firm(**mock_firm)
 
+    def test_get_provider_firm_maps_companies_house_alias(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(
+            return_value={
+                "data": {
+                    "firm": {
+                        "firmId": 123,
+                        "firmName": "Test LSP",
+                        "firmType": "Legal Services Provider",
+                        "constitutionalStatus": "Limited Company",
+                        "companiesHouseNumber": "CH-12345",
+                        "indemnityReceivedDate": "2026-08-10",
+                    }
+                }
+            }
+        )
+
+        result = initialized_client.get_provider_firm(123)
+
+        assert result.company_house_number == "CH-12345"
+        assert result.constitutional_status == "Limited Company"
+        assert result.indemnity_received_date == "2026-08-10"
+
     def test_get_provider_firm_invalid_id(self, initialized_client):
-        with pytest.raises(ValueError, match="firm_id must be a positive integer"):
+        with pytest.raises(ValueError, match="firm_id must be a positive integer or non-empty string"):
             initialized_client.get_provider_firm(-1)
+
+    def test_get_provider_firm_accepts_string_identifier(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        mock_firm = {
+            "firmId": 123,
+            "constitutionalStatus": "Charity",
+        }
+        initialized_client._handle_response = Mock(return_value={"firm": mock_firm})
+
+        result = initialized_client.get_provider_firm("3856")
+
+        initialized_client.get.assert_called_once_with("/provider-firms/3856")
+        assert result == Firm(**mock_firm)
+
+    def test_create_provider_firm_posts_then_hydrates_by_identifier(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(return_value={"data": {"providerFirmNumber": "3856"}})
+        initialized_client.get_provider_firm = Mock(
+            return_value=Firm(
+                firmId=3856,
+                firmNumber="3856",
+                firmName="TEST FIRM",
+                firmType="Legal Services Provider",
+                constitutionalStatus="Partnership",
+            )
+        )
+        firm = Firm(firmName="TEST FIRM", firmType="Legal Services Provider", constitutionalStatus="Partnership")
+
+        result = initialized_client.create_provider_firm(firm)
+
+        initialized_client.post.assert_called_once_with(
+            "/provider-firms",
+            json={
+                "name": "TEST FIRM",
+                "firmType": "Legal Services Provider",
+                "legalServicesProvider": {"constitutionalStatus": "Partnership"},
+            },
+        )
+        initialized_client.get_provider_firm.assert_called_once_with("3856")
+        assert result.firm_number == "3856"
+
+    def test_create_provider_firm_requires_identifier_in_response(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(return_value={"data": {}})
+        firm = Firm(firmName="TEST FIRM", firmType="Legal Services Provider", constitutionalStatus="Partnership")
+
+        with pytest.raises(PDAError, match="Create provider response did not include a provider identifier"):
+            initialized_client.create_provider_firm(firm)
+
+    def test_create_provider_firm_posts_full_nested_lsp_payload(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=201))
+        initialized_client.patch = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(return_value={"data": {"providerFirmNumber": "3856"}})
+        initialized_client.get_provider_firm = Mock(
+            return_value=Firm(
+                firmId=3856,
+                firmNumber="3856",
+                firmName="TEST FIRM",
+                firmType="Legal Services Provider",
+                constitutionalStatus="Limited Company",
+            )
+        )
+        firm = Firm(firmName="TEST FIRM", firmType="Legal Services Provider", constitutionalStatus="Limited Company")
+        office = Office(
+            addressLine1="45 Kings Ride",
+            addressLine2="Penn",
+            addressLine4="45 Kings Ride",
+            city="High Wycombe",
+            county="Buckinghamshire",
+            postCode="HP108BP",
+            telephoneNumber="07438342964",
+            emailAddress="smanikyam@gmail.com",
+            dxNumber="DX00001",
+            dxCentre="Leeds DX Centre",
+            paymentMethod="Cheque",
+        )
+        liaison_manager = Contact(
+            vendorSiteId=1,
+            firstName="Solomon Philip",
+            lastName="Manikyam",
+            emailAddress="smanikyam@gmail.com",
+            telephoneNumber="07438342964",
+        )
+
+        initialized_client.create_provider_firm(
+            firm,
+            office=office,
+            liaison_manager=liaison_manager,
+            contract_manager_guid="cm-guid-001",
+        )
+
+        initialized_client.post.assert_called_once_with(
+            "/provider-firms",
+            json={
+                "name": "TEST FIRM",
+                "firmType": "Legal Services Provider",
+                "legalServicesProvider": {
+                    "constitutionalStatus": "Limited Company",
+                    "address": {
+                        "line1": "45 Kings Ride",
+                        "line2": "Penn",
+                        "line4": "45 Kings Ride",
+                        "townOrCity": "High Wycombe",
+                        "county": "Buckinghamshire",
+                        "postcode": "HP108BP",
+                    },
+                    "payment": {"paymentMethod": "CHECK"},
+                    "liaisonManager": {
+                        "firstName": "Solomon Philip",
+                        "lastName": "Manikyam",
+                        "emailAddress": "smanikyam@gmail.com",
+                        "telephoneNumber": "07438342964",
+                    },
+                    "contractManager": {"contractManagerGUID": "cm-guid-001"},
+                    "telephoneNumber": "07438342964",
+                    "emailAddress": "smanikyam@gmail.com",
+                    "dxDetails": {"dxNumber": "DX00001", "dxCentre": "Leeds DX Centre"},
+                },
+            },
+        )
+        initialized_client.patch.assert_called_once_with(
+            "/provider-firms/3856",
+            json={
+                "legalServicesProvider": {
+                    "constitutionalStatus": "Limited Company",
+                }
+            },
+        )
+
+    def test_create_provider_firm_patches_lsp_optional_fields_after_create(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=201))
+        initialized_client.patch = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(return_value={"data": {"providerFirmNumber": "3856"}})
+        initialized_client.get_provider_firm = Mock(
+            return_value=Firm(
+                firmId=3856,
+                firmNumber="3856",
+                firmName="TEST FIRM",
+                firmType="Legal Services Provider",
+                constitutionalStatus="Limited Company",
+            )
+        )
+        firm = Firm(
+            firmName="TEST FIRM",
+            firmType="Legal Services Provider",
+            constitutionalStatus="Limited Company",
+            indemnityReceivedDate="2026-08-10",
+            companyHouseNumber="CH123456",
+        )
+        office = Office(addressLine1="1 Test Way", city="Leeds", postCode="LS1 1AA", paymentMethod="Cheque")
+        liaison_manager = Contact(
+            vendorSiteId=1,
+            firstName="Temp",
+            lastName="Office",
+            emailAddress="temp.office@example.com",
+            telephoneNumber="01134960000",
+        )
+
+        initialized_client.create_provider_firm(firm, office=office, liaison_manager=liaison_manager)
+
+        initialized_client.patch.assert_called_once_with(
+            "/provider-firms/3856",
+            json={
+                "legalServicesProvider": {
+                    "constitutionalStatus": "Limited Company",
+                    "indemnityReceivedDate": "2026-08-10",
+                    "companiesHouseNumber": "CH123456",
+                }
+            },
+        )
+
+    def test_create_provider_firm_does_not_fail_when_post_create_lsp_patch_conflicts(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=201))
+        initialized_client.patch = Mock(return_value=Mock(status_code=409))
+        initialized_client.get_provider_firm = Mock(
+            return_value=Firm(
+                firmId=3856,
+                firmNumber="3856",
+                firmName="TEST FIRM",
+                firmType="Legal Services Provider",
+                constitutionalStatus="Limited Company",
+            )
+        )
+
+        patch_error_response = Mock()
+        patch_error_response.status_code = 409
+        patch_error_response.url = "https://mock.provider-data-api.com/provider-firms/3856"
+        patch_error_response.json.return_value = {"detail": "Version conflict"}
+        patch_error_response.raise_for_status.side_effect = requests.HTTPError("Conflict")
+
+        initialized_client._handle_response = Mock(
+            side_effect=[
+                {"data": {"providerFirmNumber": "3856"}},
+                ProviderDataApiHttpError(409, "Version conflict", {"detail": "Version conflict"}),
+            ]
+        )
+
+        firm = Firm(
+            firmName="TEST FIRM",
+            firmType="Legal Services Provider",
+            constitutionalStatus="Limited Company",
+            companyHouseNumber="CH123456",
+        )
+        office = Office(addressLine1="1 Test Way", city="Leeds", postCode="LS1 1AA", paymentMethod="Cheque")
+        liaison_manager = Contact(
+            vendorSiteId=1,
+            firstName="Temp",
+            lastName="Office",
+            emailAddress="temp.office@example.com",
+            telephoneNumber="01134960000",
+        )
+
+        result = initialized_client.create_provider_firm(firm, office=office, liaison_manager=liaison_manager)
+
+        assert result.firm_number == "3856"
+        initialized_client.get_provider_firm.assert_called_once_with("3856")
+
+    def test_create_provider_firm_posts_practitioner_payload_with_mandatory_fields(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=201))
+        initialized_client._handle_response = Mock(return_value={"data": {"providerFirmNumber": "4001"}})
+        initialized_client.get_provider_firm = Mock(
+            return_value=Firm(
+                firmId=4001,
+                firmNumber="4001",
+                firmName="TEST ADVOCATE",
+                firmType="Advocate",
+                constitutionalStatus="N/A",
+            )
+        )
+        firm = Firm(
+            firmName="TEST ADVOCATE",
+            firmType="Advocate",
+            solicitorAdvocateYN="Yes",
+            advocateLevel="Junior",
+            barCouncilRoll="SRA1234",
+            parentFirmId=12345,
+        )
+
+        initialized_client.create_provider_firm(firm)
+
+        initialized_client.post.assert_called_once_with(
+            "/provider-firms",
+            json={
+                "name": "TEST ADVOCATE",
+                "firmType": "Advocate",
+                "practitioner": {
+                    "advocateType": "Advocate",
+                    "parentFirms": [{"parentFirmNumber": "12345"}],
+                    "liaisonManager": {"useChambersLiaisonManager": True},
+                    "payment": {"paymentMethod": "CHECK"},
+                    "advocate": {
+                        "advocateLevel": "Junior",
+                        "solicitorRegulationAuthorityRollNumber": "SRA1234",
+                    },
+                },
+            },
+        )
+
+    def test_create_provider_firm_rejects_practitioner_without_parent_chambers(self, initialized_client):
+        firm = Firm(
+            firmName="TEST ADVOCATE",
+            firmType="Advocate",
+            solicitorAdvocateYN="Yes",
+            advocateLevel="Junior",
+            barCouncilRoll="SRA1234",
+        )
+
+        with pytest.raises(PDAError, match="A parent chambers firm is required"):
+            initialized_client.create_provider_firm(firm)
+
+    def test_create_provider_office_posts_then_hydrates(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=201))
+        initialized_client._handle_response = Mock(
+            return_value={"data": {"officeCode": "ACC010", "providerFirmNumber": "100001"}}
+        )
+        initialized_client._get_provider_office_for_firm = Mock(
+            return_value=Office(
+                firmOfficeCode="ACC010",
+                addressLine1="1 Test Way",
+                city="Leeds",
+                postCode="LS1 1AA",
+                paymentMethod="CHECK",
+            )
+        )
+        office = Office(
+            officeName="Test Firm",
+            addressLine1="1 Test Way",
+            city="Leeds",
+            postCode="LS1 1AA",
+            paymentMethod="Cheque",
+        )
+        liaison_manager = Contact(
+            vendorSiteId=1,
+            firstName="Temp",
+            lastName="Office",
+            emailAddress="temp.office@example.com",
+            telephoneNumber="01134960000",
+        )
+
+        result = initialized_client.create_provider_office(
+            office,
+            100001,
+            liaison_manager=liaison_manager,
+            contract_manager_guid="cm-guid-001",
+        )
+
+        initialized_client.post.assert_called_once_with(
+            "/provider-firms/100001/offices",
+            json={
+                "address": {"line1": "1 Test Way", "townOrCity": "Leeds", "postcode": "LS1 1AA"},
+                "payment": {"paymentMethod": "CHECK"},
+                "liaisonManager": {
+                    "firstName": "Temp",
+                    "lastName": "Office",
+                    "emailAddress": "temp.office@example.com",
+                    "telephoneNumber": "01134960000",
+                },
+                "contractManager": {"contractManagerGUID": "cm-guid-001"},
+            },
+        )
+        initialized_client._get_provider_office_for_firm.assert_called_once_with("100001", "ACC010")
+        assert result.firm_office_code == "ACC010"
+
+    def test_create_office_contact_posts_then_fetches_liaison_manager(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=201))
+        initialized_client._handle_response = Mock(return_value={"data": {"liaisonManagerGUID": "lm-guid-001"}})
+        initialized_client.get_liaison_manager = Mock(
+            return_value=Contact(
+                vendorSiteId=1,
+                firstName="Jane",
+                lastName="Doe",
+                emailAddress="jane@example.com",
+                telephoneNumber="01134960000",
+            )
+        )
+        initialized_client.get_provider_office = Mock(return_value=Office(firmOfficeId=9, firmOfficeCode="ACC001"))
+        contact = Contact(
+            vendorSiteId=1,
+            firstName="Jane",
+            lastName="Doe",
+            emailAddress="jane@example.com",
+            telephoneNumber="01134960000",
+        )
+
+        result = initialized_client.create_office_contact(100001, "ACC001", contact)
+
+        initialized_client.post.assert_called_once_with(
+            "/provider-firms/100001/offices/ACC001/liaison-managers",
+            json={
+                "firstName": "Jane",
+                "lastName": "Doe",
+                "emailAddress": "jane@example.com",
+                "telephoneNumber": "01134960000",
+            },
+        )
+        initialized_client.get_liaison_manager.assert_called_once_with("lm-guid-001")
+        assert result.vendor_site_id == 9
+
+    def test_get_list_of_contract_manager_names_maps_display_name(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(
+            return_value={
+                "data": {
+                    "content": [
+                        {
+                            "guid": "cm-guid-001",
+                            "contractManagerId": "CM001",
+                            "firstName": "Alice",
+                            "lastName": "Johnson",
+                        }
+                    ]
+                }
+            }
+        )
+
+        result = initialized_client.get_list_of_contract_manager_names()
+
+        initialized_client.get.assert_called_once_with("/provider-contract-managers")
+        assert result == [{"guid": "cm-guid-001", "contractManagerId": "CM001", "name": "Alice Johnson"}]
+
+    def test_assign_contract_manager_to_office_posts_guid_then_hydrates(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=201))
+        initialized_client._handle_response = Mock(return_value={"data": {"contractManagerId": "CM002"}})
+        initialized_client._get_provider_office_for_firm = Mock(return_value=Office(firmOfficeCode="ACC001"))
+
+        result = initialized_client.assign_contract_manager_to_office(100001, "ACC001", "cm-guid-002")
+
+        initialized_client.post.assert_called_once_with(
+            "/provider-firms/100001/offices/ACC001/contract-managers",
+            json={"contractManagerGUID": "cm-guid-002"},
+        )
+        initialized_client._get_provider_office_for_firm.assert_called_once_with(100001, "ACC001")
+        assert result.firm_office_code == "ACC001"
 
     def test_get_all_provider_firms(self, initialized_client):
         initialized_client.get = Mock(return_value=Mock(status_code=200))
@@ -160,6 +585,17 @@ class TestProviderDataApi:
 
         initialized_client.get.assert_called_once_with("/provider-firms")
         assert result == [Firm(**mock_firm)]
+
+    def test_provider_name_exists(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(
+            return_value={"data": {"content": [{"name": "Test LSP"}, {"name": "Other Firm"}]}}
+        )
+
+        result = initialized_client.provider_name_exists("Test LSP")
+
+        initialized_client.get.assert_called_once_with("/provider-firms", params={"name": "Test LSP"})
+        assert result is True
 
     def test_get_provider_office_success(self, initialized_client):
         initialized_client.get = Mock(return_value=Mock(status_code=200))
@@ -210,6 +646,33 @@ class TestProviderDataApi:
         initialized_client.get.assert_any_call("/provider-firms/123/provider-offices")
         initialized_client.get.assert_any_call("/provider-firms/123/offices")
         assert result == [Office(firm_office_code="1A234B")]
+
+    def test_get_head_office_enriches_contract_manager_when_office_payload_omits_it(self, initialized_client):
+        initialized_client.get_provider_offices = Mock(return_value=[Office(firmOfficeCode="ACC001", headOffice="N/A")])
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(
+            return_value={
+                "data": {
+                    "content": [
+                        {
+                            "guid": "cm-guid-001",
+                            "contractManagerId": "CM001",
+                            "firstName": "John",
+                            "lastName": "Smith",
+                            "linkedFlag": True,
+                        }
+                    ]
+                }
+            }
+        )
+
+        head_office = initialized_client.get_head_office(123)
+
+        initialized_client.get.assert_called_once_with("/provider-firms/123/offices/ACC001/contract-managers")
+        assert head_office is not None
+        assert head_office.contract_manager == "John Smith"
+        assert head_office.contract_manager_guid == "cm-guid-001"
+        assert head_office.contract_manager_id == "CM001"
 
     def test_get_provider_users(self, initialized_client):
         initialized_client.get = Mock(return_value=Mock(status_code=200))

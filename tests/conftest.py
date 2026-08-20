@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from cachelib import SimpleCache
 
@@ -37,6 +39,18 @@ class TestConfig(Config):
 
 @pytest.fixture(scope="session")
 def app(config=TestConfig):
-    app = create_app(config, MockProviderDataApi)
+    use_real_pda = os.environ.get("TEST_USE_REAL_PDA", "false").lower() == "true"
+
+    if use_real_pda:
+
+        class RealPdaTestConfig(TestConfig):
+            PDA_USE_MOCK_API = False
+            PDA_URL = os.environ.get("TEST_PDA_URL", os.environ.get("PDA_URL", "http://localhost:8080"))
+            PDA_API_KEY = os.environ.get("TEST_PDA_API_KEY", os.environ.get("PDA_API_KEY", "Dummy1"))
+
+        app = create_app(RealPdaTestConfig)
+    else:
+        app = create_app(config, MockProviderDataApi)
+
     with app.app_context():
         yield app

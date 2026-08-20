@@ -1,8 +1,10 @@
 from unittest.mock import Mock, patch
 
-from flask import url_for
+from flask import get_flashed_messages, session, url_for
 
 from app.forms import BaseForm
+from app.main.views import ViewProvider
+from app.pda.errors import ProviderDataApiHttpError
 from app.views import BaseFormView
 
 
@@ -244,3 +246,27 @@ class TestBaseFormViewIntegration:
 
             mock_url_for.assert_called_once_with("custom.endpoint")
             assert result == "/custom/path"
+
+
+class TestViewProviderRecovery:
+    def test_duplicate_provider_conflict_redirects_with_flash(self, app):
+        with app.test_request_context("/view-provider"):
+            session["new_provider"] = {
+                "firm_name": "Duplicate Firm",
+                "firm_type": "Legal Services Provider",
+            }
+            session["new_head_office"] = {"address_line_1": "123 Test Street"}
+
+            view = ViewProvider()
+
+            with patch(
+                "app.main.views.create_provider_from_session", side_effect=ProviderDataApiHttpError(409, "Conflict")
+            ):
+                response = view.get(None)
+
+            assert response.status_code == 302
+            assert response.location == url_for("main.assign_contract_manager")
+            messages = get_flashed_messages(with_categories=True)
+            assert messages == [
+                ("error", "<b>Duplicate Firm already exists.</b> Change the provider name and try again.")
+            ]

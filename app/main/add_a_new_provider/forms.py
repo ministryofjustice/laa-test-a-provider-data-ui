@@ -1,5 +1,5 @@
 from flask import current_app, session
-from wtforms import RadioField, SubmitField
+from wtforms import RadioField, SubmitField, ValidationError
 from wtforms.fields.simple import StringField
 from wtforms.validators import Email, InputRequired, Length, Optional
 
@@ -40,10 +40,24 @@ class AddProviderForm(BaseForm):
 
     provider_type = RadioField(
         "Provider type",
-        widget=GovRadioInput(heading_class="govuk-fieldset__legend--m"),
+        widget=GovRadioInput(
+            heading_class="govuk-fieldset__legend--m",
+            hint="To add an advocate or barrister, open a chambers record and use Add advocate/Add barrister.",
+        ),
         validators=[InputRequired(message=("Select a provider type"))],
         choices=PARENT_FIRM_TYPE_CHOICES,
     )
+
+    def validate_provider_name(self, field):
+        if not field.data:
+            return
+
+        pda = current_app.extensions.get("pda")
+        if not pda or not hasattr(pda, "provider_name_exists"):
+            return
+
+        if pda.provider_name_exists(field.data):
+            raise ValidationError(f"A provider named {field.data} already exists")
 
 
 class LspDetailsForm(BaseForm):
@@ -348,7 +362,7 @@ class AssignContractManagerForm(BaseForm):
             structure=table_structure,
             data=filtered_managers,
             radio_field_name="contract_manager",
-            radio_value_key="name",
+            radio_value_key="guid",
         )
 
         # Store selected value for table rendering
@@ -357,6 +371,11 @@ class AssignContractManagerForm(BaseForm):
     def get_contract_managers(self):
         pda = current_app.extensions["pda"]
         return pda.get_list_of_contract_manager_names()
+
+    def get_contract_manager_by_guid(self, guid: str | None):
+        if not guid:
+            return None
+        return next((manager for manager in self.contract_managers if manager.get("guid") == guid), None)
 
 
 class AddBarristerDetailsForm(BaseForm):
