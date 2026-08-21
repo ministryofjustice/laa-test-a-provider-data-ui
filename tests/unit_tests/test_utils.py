@@ -6,7 +6,7 @@ from flask import Blueprint
 from flask_wtf import FlaskForm
 from wtforms import StringField
 
-from app.main.utils import change_liaison_manager, reassign_head_office
+from app.main.utils import change_liaison_manager, get_firm_tags, reassign_head_office
 from app.models import Contact
 from app.pda.mock_api import MockPDAError, MockProviderDataApi
 from app.utils import register_form_view
@@ -512,3 +512,19 @@ class TestReassignHeadOffice:
         with app.test_request_context():
             with pytest.raises(ValueError, match="HEAD01 is already the head office"):
                 reassign_head_office(firm=1, new_head_office="HEAD01")
+
+
+class TestGetFirmTags:
+    def test_advocate_without_head_office_does_not_raise(self):
+        firm_data = {
+            "firm_id": 123,
+            "firm_type": "Advocate",
+        }
+
+        with (
+            patch("app.main.utils._get_firm_head_office", return_value=None),
+            patch("app.main.utils.get_firm_contract_manager", return_value=None),
+        ):
+            tags = get_firm_tags(firm_data)
+
+        assert tags == []

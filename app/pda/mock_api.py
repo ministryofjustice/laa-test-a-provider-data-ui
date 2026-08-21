@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import random
+import re
 import string
 import time
 from datetime import date
@@ -165,12 +166,39 @@ class MockProviderDataApi:
             self.logger.error(f"Invalid firms data in mock: {e}")
             raise MockPDAError(f"Invalid firms data: {e}")
 
-    def get_provider_office(self, office_code: str) -> Office | None:
+    def search_provider_firms(self, search_term: str) -> List[Firm]:
+        """Search provider firms by name or provider ID in mock data."""
+        if not search_term or not isinstance(search_term, str):
+            return []
+
+        normalized_search = re.sub(r"[^a-z0-9]", "", search_term.strip().lower())
+        if not normalized_search:
+            return []
+
+        try:
+            results: List[Firm] = []
+            for firm in self._mock_data["firms"]:
+                cleaned = _clean_data(firm)
+                candidate_name = str(cleaned.get("firmName", ""))
+                candidate_id = str(cleaned.get("firmId", ""))
+
+                normalized_name = re.sub(r"[^a-z0-9]", "", candidate_name.lower())
+                normalized_id = re.sub(r"[^a-z0-9]", "", candidate_id.lower())
+                if normalized_search in normalized_name or normalized_search in normalized_id:
+                    results.append(Firm(**cleaned))
+
+            return results
+        except ValidationError as e:
+            self.logger.error(f"Invalid firms data in mock search for term {search_term}: {e}")
+            raise MockPDAError(f"Invalid firms data: {e}")
+
+    def get_provider_office(self, office_code: str, firm_id: int | None = None) -> Office | None:
         """
         Get details for a specific provider office.
 
         Args:
             office_code: The office code
+            firm_id: Optional provider firm ID. Unused in mock implementation.
 
         Returns:
             Office model instance, or None if not found

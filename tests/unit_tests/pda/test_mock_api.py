@@ -187,6 +187,18 @@ class TestMockProviderDataApi:
         expected = [Firm(**{"firmId": 1, "firmName": "Test Firm"}), Firm(**{"firmId": 2, "firmName": "Other Firm"})]
         assert result == expected
 
+    def test_search_provider_firms(self, mock_api):
+        mock_api._mock_data = {
+            "firms": [
+                {"firmId": 1, "firmName": "Alpha Legal"},
+                {"firmId": 2, "firmName": "Test LSP"},
+            ]
+        }
+
+        result = mock_api.search_provider_firms("Test")
+
+        assert result == [Firm(**{"firmId": 2, "firmName": "Test LSP"})]
+
     def test_get_provider_office_success(self, mock_api):
         mock_api._mock_data = {
             "offices": [{"firmOfficeCode": "1A001L", "officeName": "Test Office", "_secret": "data"}]

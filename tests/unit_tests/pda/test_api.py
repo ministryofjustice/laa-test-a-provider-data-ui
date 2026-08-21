@@ -597,20 +597,51 @@ class TestProviderDataApi:
         initialized_client.get.assert_called_once_with("/provider-firms", params={"name": "Test LSP"})
         assert result is True
 
+    def test_search_provider_firms(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(
+            return_value={"data": {"content": [{"firmId": 456, "firmName": "Test LSP"}]}}
+        )
+
+        result = initialized_client.search_provider_firms("Test LSP")
+
+        initialized_client.get.assert_called_once_with("/provider-firms", params={"name": "Test LSP"})
+        assert len(result) == 1
+        assert result[0].firm_id == 456
+        assert result[0].firm_name == "Test LSP"
+
     def test_get_provider_office_success(self, initialized_client):
         initialized_client.get = Mock(return_value=Mock(status_code=200))
         initialized_client._handle_response = Mock(return_value={"firm_office_code": "1A234B"})
 
-        result = initialized_client.get_provider_office("1A234B")
+        result = initialized_client.get_provider_office("1A234B", firm_id=123)
 
-        initialized_client.get.assert_called_once_with("/provider-offices/1A234B")
+        initialized_client.get.assert_called_once_with("/provider-firms/123/offices/1A234B")
         assert result == Office(firm_office_code="1A234B")
 
-    def test_get_provider_office_falls_back_to_provider_firms_offices(self, initialized_client):
+    def test_get_provider_office_falls_back_to_legacy_detail_endpoint(self, initialized_client):
+        initialized_client.get = Mock(side_effect=[Mock(status_code=404), Mock(status_code=200)])
+        initialized_client._handle_response = Mock(side_effect=[None, {"firm_office_code": "1A234B"}])
+        initialized_client.logger.warning = Mock()
+
+        result = initialized_client.get_provider_office("1A234B", firm_id=123)
+
+        assert initialized_client.get.call_count == 2
+        initialized_client.get.assert_any_call("/provider-firms/123/offices/1A234B")
+        initialized_client.get.assert_any_call("/provider-offices/1A234B")
+        initialized_client.logger.warning.assert_called_once_with(
+            "OpenAPI office detail lookup returned no data for firm %s office %s; falling back to legacy endpoint.",
+            123,
+            "1A234B",
+        )
+        assert result == Office(firm_office_code="1A234B")
+
+    def test_get_provider_office_without_firm_id_falls_back_to_provider_firms_offices(self, initialized_client):
         initialized_client.get = Mock(side_effect=[Mock(status_code=404), Mock(status_code=200)])
         initialized_client._handle_response = Mock(
             side_effect=[None, {"data": {"content": [{"firm_office_code": "1A234B"}]}}]
         )
+        initialized_client.logger.warning = Mock()
 
         result = initialized_client.get_provider_office("1A234B")
 
@@ -620,10 +651,18 @@ class TestProviderDataApi:
             "/provider-firms-offices", params={"officeCode": "1A234B", "pageSize": 1}
         )
         assert result == Office(firm_office_code="1A234B")
+        initialized_client.logger.warning.assert_any_call(
+            "Office lookup called without firm_id for office %s; using legacy endpoint fallback path.",
+            "1A234B",
+        )
 
     def test_get_provider_office_invalid_code(self, initialized_client):
         with pytest.raises(ValueError, match="office_code must be a non-empty string"):
             initialized_client.get_provider_office("")
+
+    def test_get_provider_office_invalid_firm_id(self, initialized_client):
+        with pytest.raises(ValueError, match="firm_id must be a positive integer"):
+            initialized_client.get_provider_office("1A234B", firm_id=0)
 
     def test_get_provider_offices(self, initialized_client):
         initialized_client.get = Mock(return_value=Mock(status_code=200))
@@ -631,20 +670,25 @@ class TestProviderDataApi:
 
         result = initialized_client.get_provider_offices(123)
 
-        initialized_client.get.assert_called_once_with("/provider-firms/123/provider-offices")
+        initialized_client.get.assert_called_once_with("/provider-firms/123/offices")
         assert result == [Office(firm_office_code="1A234B")]
 
-    def test_get_provider_offices_falls_back_to_new_offices_endpoint(self, initialized_client):
+    def test_get_provider_offices_falls_back_to_legacy_offices_endpoint(self, initialized_client):
         initialized_client.get = Mock(side_effect=[Mock(status_code=404), Mock(status_code=200)])
         initialized_client._handle_response = Mock(
             side_effect=[[], {"data": {"content": [{"firm_office_code": "1A234B"}]}}]
         )
+        initialized_client.logger.warning = Mock()
 
         result = initialized_client.get_provider_offices(123)
 
         assert initialized_client.get.call_count == 2
-        initialized_client.get.assert_any_call("/provider-firms/123/provider-offices")
         initialized_client.get.assert_any_call("/provider-firms/123/offices")
+        initialized_client.get.assert_any_call("/provider-firms/123/provider-offices")
+        initialized_client.logger.warning.assert_called_once_with(
+            "OpenAPI office list lookup returned no data for firm %s; falling back to legacy endpoint.",
+            123,
+        )
         assert result == [Office(firm_office_code="1A234B")]
 
     def test_get_head_office_enriches_contract_manager_when_office_payload_omits_it(self, initialized_client):
@@ -758,6 +802,31 @@ class TestProviderDataApi:
         assert bank_accounts[0].sort_code == "300000"
         assert bank_accounts[0].account_number == "00000001"
         assert bank_accounts[0].primary_flag == "Y"
+
+    def test_get_office_bank_details_normalizes_dashed_sort_code_in_legacy_shape(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(
+            return_value=[
+                {
+                    "bankAccountId": 101,
+                    "vendorSiteId": 12,
+                    "bankName": "Example Bank",
+                    "bankBranchName": "Main Branch",
+                    "sortCode": "02-55-96",
+                    "accountNumber": "12345678",
+                    "bankAccountName": "Payments",
+                    "currencyCode": "GBP",
+                    "accountType": "Current",
+                    "primaryFlag": "Y",
+                    "startDate": "2026-08-21",
+                }
+            ]
+        )
+
+        bank_accounts = initialized_client.get_office_bank_accounts(2108292, "ETRHA2")
+
+        assert len(bank_accounts) == 1
+        assert bank_accounts[0].sort_code == "025596"
 
     def test_update_office_payment_method(self, initialized_client):
         initialized_client.patch_office = Mock(return_value={})

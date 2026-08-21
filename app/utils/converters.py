@@ -1,4 +1,6 @@
-from flask import current_app
+import re
+
+from flask import current_app, request
 from werkzeug.exceptions import NotFound
 from werkzeug.routing import BaseConverter
 
@@ -73,7 +75,10 @@ class OfficeConverter(BaseConverter):
         if not pda:
             raise RuntimeError("Provider Data API not initialized")
 
-        office = pda.get_provider_office(office_code)
+        match = re.search(r"/provider/(?P<firm_id>\d+)/office/", request.path)
+        firm_id = int(match.group("firm_id")) if match else None
+
+        office = pda.get_provider_office(office_code, firm_id=firm_id)
         if not office:
             raise NotFound(f"Office with code {office_code} not found")
 

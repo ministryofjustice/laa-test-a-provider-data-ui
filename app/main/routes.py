@@ -39,7 +39,7 @@ def contracts(firm_id: int, office_code: str, context):
     if len(contract_data) != 0:
         office_name = data["office"]["officeName"]
     else:
-        office = pda.get_provider_office(office_code)
+        office = pda.get_provider_office(office_code, firm_id=firm_id)
         office_name = office.office_name if office else ""
 
     table = DataTable(structure=columns, data=contract_data)
@@ -73,7 +73,7 @@ def schedules(firm_id: int, office_code: str, context):
     if len(schedule_data) != 0:
         office_name = data["office"]["officeName"]
     else:
-        office = pda.get_provider_office(office_code)
+        office = pda.get_provider_office(office_code, firm_id=firm_id)
         office_name = office.office_name if office else ""
 
     table = DataTable(structure=columns, data=schedule_data)
@@ -107,7 +107,7 @@ def bank_details(firm_id: int, office_code: str, context):
     ]
 
     pda = current_app.extensions["pda"]
-    office = pda.get_provider_office(office_code)
+    office = pda.get_provider_office(office_code, firm_id=firm_id)
     office_name = office.office_name if office else ""
 
     example_data = {
