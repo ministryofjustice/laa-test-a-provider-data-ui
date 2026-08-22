@@ -619,40 +619,40 @@ class TestProviderDataApi:
         initialized_client.get.assert_called_once_with("/provider-firms/123/offices/1A234B")
         assert result == Office(firm_office_code="1A234B")
 
-    def test_get_provider_office_falls_back_to_legacy_detail_endpoint(self, initialized_client):
-        initialized_client.get = Mock(side_effect=[Mock(status_code=404), Mock(status_code=200)])
-        initialized_client._handle_response = Mock(side_effect=[None, {"firm_office_code": "1A234B"}])
-        initialized_client.logger.warning = Mock()
-
-        result = initialized_client.get_provider_office("1A234B", firm_id=123)
-
-        assert initialized_client.get.call_count == 2
-        initialized_client.get.assert_any_call("/provider-firms/123/offices/1A234B")
-        initialized_client.get.assert_any_call("/provider-offices/1A234B")
-        initialized_client.logger.warning.assert_called_once_with(
-            "OpenAPI office detail lookup returned no data for firm %s office %s; falling back to legacy endpoint.",
-            123,
-            "1A234B",
-        )
-        assert result == Office(firm_office_code="1A234B")
-
-    def test_get_provider_office_without_firm_id_falls_back_to_provider_firms_offices(self, initialized_client):
+    def test_get_provider_office_falls_back_to_provider_firms_offices_search(self, initialized_client):
         initialized_client.get = Mock(side_effect=[Mock(status_code=404), Mock(status_code=200)])
         initialized_client._handle_response = Mock(
             side_effect=[None, {"data": {"content": [{"firm_office_code": "1A234B"}]}}]
         )
         initialized_client.logger.warning = Mock()
 
-        result = initialized_client.get_provider_office("1A234B")
+        result = initialized_client.get_provider_office("1A234B", firm_id=123)
 
         assert initialized_client.get.call_count == 2
-        initialized_client.get.assert_any_call("/provider-offices/1A234B")
+        initialized_client.get.assert_any_call("/provider-firms/123/offices/1A234B")
         initialized_client.get.assert_any_call(
             "/provider-firms-offices", params={"officeCode": "1A234B", "pageSize": 1}
         )
+        initialized_client.logger.warning.assert_called_once_with(
+            "OpenAPI office detail lookup returned no data for firm %s office %s; falling back to provider-firms-offices search.",
+            123,
+            "1A234B",
+        )
         assert result == Office(firm_office_code="1A234B")
-        initialized_client.logger.warning.assert_any_call(
-            "Office lookup called without firm_id for office %s; using legacy endpoint fallback path.",
+
+    def test_get_provider_office_without_firm_id_falls_back_to_provider_firms_offices(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(return_value={"data": {"content": [{"firm_office_code": "1A234B"}]}})
+        initialized_client.logger.warning = Mock()
+
+        result = initialized_client.get_provider_office("1A234B")
+
+        initialized_client.get.assert_called_once_with(
+            "/provider-firms-offices", params={"officeCode": "1A234B", "pageSize": 1}
+        )
+        assert result == Office(firm_office_code="1A234B")
+        initialized_client.logger.warning.assert_called_once_with(
+            "Office lookup called without firm_id for office %s; using provider-firms-offices search.",
             "1A234B",
         )
 
@@ -673,23 +673,23 @@ class TestProviderDataApi:
         initialized_client.get.assert_called_once_with("/provider-firms/123/offices")
         assert result == [Office(firm_office_code="1A234B")]
 
-    def test_get_provider_offices_falls_back_to_legacy_offices_endpoint(self, initialized_client):
-        initialized_client.get = Mock(side_effect=[Mock(status_code=404), Mock(status_code=200)])
-        initialized_client._handle_response = Mock(
-            side_effect=[[], {"data": {"content": [{"firm_office_code": "1A234B"}]}}]
-        )
+    def test_get_provider_offices_returns_empty_when_openapi_returns_no_data(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=404))
+        initialized_client._handle_response = Mock(return_value=[])
         initialized_client.logger.warning = Mock()
 
         result = initialized_client.get_provider_offices(123)
 
-        assert initialized_client.get.call_count == 2
-        initialized_client.get.assert_any_call("/provider-firms/123/offices")
-        initialized_client.get.assert_any_call("/provider-firms/123/provider-offices")
-        initialized_client.logger.warning.assert_called_once_with(
-            "OpenAPI office list lookup returned no data for firm %s; falling back to legacy endpoint.",
+        initialized_client.get.assert_called_once_with("/provider-firms/123/offices")
+        initialized_client.logger.warning.assert_any_call(
+            "OpenAPI office list lookup returned no data for firm %s.",
             123,
         )
-        assert result == [Office(firm_office_code="1A234B")]
+        initialized_client.logger.warning.assert_any_call(
+            "No offices found for firm %s.",
+            123,
+        )
+        assert result == []
 
     def test_get_head_office_enriches_contract_manager_when_office_payload_omits_it(self, initialized_client):
         initialized_client.get_provider_offices = Mock(return_value=[Office(firmOfficeCode="ACC001", headOffice="N/A")])

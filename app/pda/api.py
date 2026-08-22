@@ -1007,25 +1007,17 @@ class ProviderDataApi:
             raw_data = self._handle_response(response, None)
             if raw_data is None:
                 self.logger.warning(
-                    "OpenAPI office detail lookup returned no data for firm %s office %s; falling back to legacy endpoint.",
+                    "OpenAPI office detail lookup returned no data for firm %s office %s; falling back to provider-firms-offices search.",
                     firm_id,
                     office_code,
                 )
         else:
             self.logger.warning(
-                "Office lookup called without firm_id for office %s; using legacy endpoint fallback path.",
+                "Office lookup called without firm_id for office %s; using provider-firms-offices search.",
                 office_code,
             )
 
         if raw_data is None:
-            fallback_response = self.get(f"/provider-offices/{office_code}")
-            raw_data = self._handle_response(fallback_response, None)
-
-        if raw_data is None:
-            self.logger.warning(
-                "Legacy office detail lookup returned no data for office %s; falling back to legacy office search endpoint.",
-                office_code,
-            )
             fallback_response = self.get("/provider-firms-offices", params={"officeCode": office_code, "pageSize": 1})
             fallback_data = self._handle_response(fallback_response, [])
             offices = self._extract_collection(fallback_data, ["offices"])
@@ -1033,7 +1025,7 @@ class ProviderDataApi:
 
         if raw_data is None:
             self.logger.warning(
-                "No office data found for office %s%s after OpenAPI and legacy fallbacks.",
+                "No office data found for office %s%s after PDA-R2 fallbacks.",
                 office_code,
                 f" (firm {firm_id})" if firm_id is not None else "",
             )
@@ -1067,16 +1059,13 @@ class ProviderDataApi:
         offices_data = self._extract_collection(raw_data, ["offices"])
         if not offices_data:
             self.logger.warning(
-                "OpenAPI office list lookup returned no data for firm %s; falling back to legacy endpoint.",
+                "OpenAPI office list lookup returned no data for firm %s.",
                 firm_id,
             )
-            fallback_response = self.get(f"/provider-firms/{firm_id}/provider-offices")
-            fallback_data = self._handle_response(fallback_response, [])
-            offices_data = self._extract_collection(fallback_data, ["offices"])
 
         if not offices_data:
             self.logger.warning(
-                "No offices found for firm %s after OpenAPI and legacy fallbacks.",
+                "No offices found for firm %s.",
                 firm_id,
             )
             return []

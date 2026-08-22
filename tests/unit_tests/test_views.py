@@ -256,11 +256,74 @@ class TestViewProviderRecovery:
                 "firm_type": "Legal Services Provider",
             }
             session["new_head_office"] = {"address_line_1": "123 Test Street"}
+            session["new_head_office_bank_account"] = {"account_number": "12345678"}
+            session["new_liaison_manager"] = {"first_name": "Jane"}
 
             view = ViewProvider()
 
             with patch(
-                "app.main.views.create_provider_from_session", side_effect=ProviderDataApiHttpError(409, "Conflict")
+                "app.main.views.create_provider_from_session",
+                side_effect=ProviderDataApiHttpError(409, "Provider with this name already exists"),
+            ):
+                response = view.get(None)
+
+            assert response.status_code == 302
+            assert response.location == url_for("main.add_parent_provider")
+            messages = get_flashed_messages(with_categories=True)
+            assert messages == [
+                (
+                    "error",
+                    {
+                        "html": "<b>Duplicate Firm already exists.</b> Change the provider name and try again. <a class='govuk-link' href='/add-parent-provider'>Return to Add parent provider</a>.",
+                    },
+                )
+            ]
+            assert "new_provider" not in session
+            assert "new_head_office" not in session
+            assert "new_head_office_bank_account" not in session
+            assert "new_liaison_manager" not in session
+
+    def test_non_duplicate_conflict_shows_backend_detail(self, app):
+        with app.test_request_context("/view-provider"):
+            session["new_provider"] = {
+                "firm_name": "Test LSP77",
+                "firm_type": "Legal Services Provider",
+            }
+            session["new_head_office"] = {"address_line_1": "123 Test Street"}
+
+            view = ViewProvider()
+
+            with patch(
+                "app.main.views.create_provider_from_session",
+                side_effect=ProviderDataApiHttpError(409, "Office account number already exists"),
+            ):
+                response = view.get(None)
+
+            assert response.status_code == 302
+            assert response.location == url_for("main.add_parent_provider")
+            messages = get_flashed_messages(with_categories=True)
+            assert messages == [
+                (
+                    "error",
+                    {
+                        "html": "<b>Unable to create provider due to a data conflict.</b> Office account number already exists Check the details and try again. <a class='govuk-link' href='/add-parent-provider'>Return to Add parent provider</a>.",
+                    },
+                )
+            ]
+
+    def test_non_409_error_shows_backend_detail_and_redirects_to_assign_manager(self, app):
+        with app.test_request_context("/view-provider"):
+            session["new_provider"] = {
+                "firm_name": "Test LSP77",
+                "firm_type": "Legal Services Provider",
+            }
+            session["new_head_office"] = {"address_line_1": "123 Test Street"}
+
+            view = ViewProvider()
+
+            with patch(
+                "app.main.views.create_provider_from_session",
+                side_effect=ProviderDataApiHttpError(400, "contractManager must be provided"),
             ):
                 response = view.get(None)
 
@@ -268,5 +331,8 @@ class TestViewProviderRecovery:
             assert response.location == url_for("main.assign_contract_manager")
             messages = get_flashed_messages(with_categories=True)
             assert messages == [
-                ("error", "<b>Duplicate Firm already exists.</b> Change the provider name and try again.")
+                (
+                    "error",
+                    "Unable to create provider with the configured backend. contractManager must be provided",
+                )
             ]

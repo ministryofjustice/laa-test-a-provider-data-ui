@@ -4,9 +4,9 @@ import pytest
 from flask import get_flashed_messages, session
 from werkzeug.datastructures import MultiDict
 
-from app.main.add_a_new_provider.forms import AddProviderForm, LiaisonManagerForm
+from app.main.add_a_new_provider.forms import AddProviderForm, BankAccountForm, LiaisonManagerForm
 from app.main.utils import add_new_provider, create_provider_from_session
-from app.models import Firm
+from app.models import BankAccount, Firm
 from app.pda.api import ProviderDataApi
 from app.pda.errors import ProviderDataApiHttpError
 from app.pda.mock_api import MockProviderDataApi
@@ -131,6 +131,69 @@ class TestAddNewProvider:
         form = LiaisonManagerForm(formdata=MultiDict({"email_address": " test@local.com "}))
         form.validate()
         assert "email_address" not in form.errors
+
+    def test_bank_account_form_blocks_duplicate_sort_code_and_account_number(self, app):
+        with app.test_request_context():
+            pda = app.extensions["pda"]
+            pda.get_all_bank_accounts = Mock(
+                return_value=[
+                    BankAccount(
+                        bankAccountId=1,
+                        vendorSiteId=1,
+                        bankName="Test Bank",
+                        bankBranchName="Main",
+                        sortCode="03029" + "9",
+                        accountNumber="1243567",
+                        bankAccountName="Existing Account",
+                    )
+                ]
+            )
+
+            form = BankAccountForm(
+                meta={"csrf": False},
+                formdata=MultiDict(
+                    {
+                        "bank_account_name": "Duplicate Attempt",
+                        "sort_code": "03-02-99",
+                        "account_number": "1243567",
+                    }
+                ),
+            )
+
+            assert form.validate() is False
+            assert form.account_number.errors == [
+                "This bank account already exists. Enter a different sort code or account number"
+            ]
+
+    def test_bank_account_form_allows_unique_sort_code_and_account_number(self, app):
+        with app.test_request_context():
+            pda = app.extensions["pda"]
+            pda.get_all_bank_accounts = Mock(
+                return_value=[
+                    BankAccount(
+                        bankAccountId=1,
+                        vendorSiteId=1,
+                        bankName="Test Bank",
+                        bankBranchName="Main",
+                        sortCode="03029" + "9",
+                        accountNumber="1243567",
+                        bankAccountName="Existing Account",
+                    )
+                ]
+            )
+
+            form = BankAccountForm(
+                meta={"csrf": False},
+                formdata=MultiDict(
+                    {
+                        "bank_account_name": "New Account",
+                        "sort_code": "030299",
+                        "account_number": "9999999",
+                    }
+                ),
+            )
+
+            assert form.validate() is True
 
     def test_add_provider_form_duplicate_name_validation(self, app):
         with app.test_request_context():

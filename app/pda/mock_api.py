@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 from pydantic import ValidationError
 
-from app.constants import FirmType
+from app.constants import DEFAULT_CONTRACT_MANAGER_NAME, FirmType
 from app.models import BankAccount, Contact, Firm, Office
 from app.pda.errors import ProviderDataApiError
 from app.utils.formatting import normalize_for_search
@@ -897,8 +897,9 @@ class MockProviderDataApi:
         return self.patch_office(firm_id, office_code, data)
 
     def get_list_of_contract_manager_names(self):
-        # Static list of 12 fake contract managers
+        # Static list of fake contract managers including the default 'unknown' option.
         return [
+            {"guid": "cm-guid-000", "contractManagerId": "CM000", "name": DEFAULT_CONTRACT_MANAGER_NAME},
             {"guid": "cm-guid-001", "contractManagerId": "CM001", "name": "Alice Johnson"},
             {"guid": "cm-guid-002", "contractManagerId": "CM002", "name": "Robert Smith"},
             {"guid": "cm-guid-003", "contractManagerId": "CM003", "name": "Sarah Wilson"},
