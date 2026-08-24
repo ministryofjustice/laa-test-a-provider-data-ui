@@ -1,3 +1,5 @@
+import re
+
 from flask import current_app, session
 from wtforms import RadioField, SubmitField, ValidationError
 from wtforms.fields.simple import StringField
@@ -208,11 +210,42 @@ class BankAccountForm(BaseBankAccountForm):
     title = "Head office: \nBank account details"
     url = "add-bank-account"
 
+    @staticmethod
+    def _digits_only(value: str | None) -> str:
+        return re.sub(r"\D", "", value or "")
+
     @property
     def caption(self):
         # Get provider name from session if available
         new_provider_name = session.get("new_provider", {}).get("firm_name", "Unknown")
         return new_provider_name
+
+    def validate_account_number(self, field):
+        # Skip duplicate checks until format/required validators have passed.
+        if self.sort_code.errors or field.errors or not self.sort_code.data or not field.data:
+            return
+
+        pda = current_app.extensions.get("pda")
+        if not pda or not hasattr(pda, "get_all_bank_accounts"):
+            return
+
+        sort_code = self._digits_only(self.sort_code.data)
+        account_number = self._digits_only(field.data)
+
+        if not sort_code or not account_number:
+            return
+
+        try:
+            existing_accounts = pda.get_all_bank_accounts()
+        except Exception:
+            # Do not block progression on transient lookup failures.
+            return
+
+        for account in existing_accounts:
+            existing_sort = self._digits_only(getattr(account, "sort_code", None))
+            existing_number = self._digits_only(getattr(account, "account_number", None))
+            if sort_code == existing_sort and account_number == existing_number:
+                raise ValidationError("This bank account already exists. Enter a different sort code or account number")
 
     skip_button = SubmitField(
         "Cheque payment: Skip this step", widget=GovSubmitInput(classes="govuk-button--secondary govuk-!-margin-left-2")

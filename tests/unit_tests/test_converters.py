@@ -4,8 +4,8 @@ import pytest
 from werkzeug.exceptions import NotFound
 from werkzeug.routing import Map
 
-from app.models import Firm
-from app.utils.converters import FirmConverter
+from app.models import Firm, Office
+from app.utils.converters import FirmConverter, OfficeConverter
 
 
 class TestFirmConverter:
@@ -87,3 +87,37 @@ class TestFirmConverter:
         result = self.converter.to_url(mock_firm)
 
         assert result == "0"
+
+
+class TestOfficeConverter:
+    def setup_method(self):
+        self.url_map = Map()
+        self.converter = OfficeConverter(self.url_map)
+
+    def test_to_python_with_firm_id_in_path_uses_openapi_lookup(self, app):
+        with app.test_request_context("/provider/123/office/1A001L"):
+            pda = app.extensions["pda"]
+            pda.get_provider_office = Mock(return_value=Office(firmOfficeCode="1A001L"))
+
+            result = self.converter.to_python("1A001L")
+
+            pda.get_provider_office.assert_called_once_with("1A001L", firm_id=123)
+            assert isinstance(result, Office)
+
+    def test_to_python_without_firm_id_in_path_uses_legacy_fallback_path(self, app):
+        with app.test_request_context("/office/1A001L"):
+            pda = app.extensions["pda"]
+            pda.get_provider_office = Mock(return_value=Office(firmOfficeCode="1A001L"))
+
+            result = self.converter.to_python("1A001L")
+
+            pda.get_provider_office.assert_called_once_with("1A001L", firm_id=None)
+            assert isinstance(result, Office)
+
+    def test_to_python_not_found_raises_not_found(self, app):
+        with app.test_request_context("/provider/123/office/MISSING"):
+            pda = app.extensions["pda"]
+            pda.get_provider_office = Mock(return_value=None)
+
+            with pytest.raises(NotFound, match="Office with code MISSING not found"):
+                self.converter.to_python("MISSING")

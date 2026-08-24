@@ -479,7 +479,7 @@ def get_firm_tags(firm: Firm | dict):
 
     if firm_data.get("firm_type") in ["Advocate", "Barrister"]:
         head_office = _get_firm_head_office(firm_data["firm_id"])
-        if head_office.intervened_date:
+        if head_office and head_office.intervened_date:
             tags.append(Tag(TagType.INTERVENED))
 
     contract_manager = get_firm_contract_manager(firm_data["firm_id"])
@@ -618,7 +618,7 @@ def reassign_head_office(firm: Firm | int, new_head_office: Office | str) -> Off
         firm = pda.get_provider_firm(firm)
 
     if isinstance(new_head_office, str):
-        new_head_office = pda.get_provider_office(new_head_office)
+        new_head_office = pda.get_provider_office(new_head_office, firm_id=firm.firm_id if firm else None)
 
     # Validation
     if firm.firm_type == "Chambers":

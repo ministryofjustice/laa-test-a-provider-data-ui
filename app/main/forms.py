@@ -65,7 +65,7 @@ class ProviderListForm(BaseForm):
 
         # Get firms data
         pda = current_app.extensions["pda"]
-        firms: list[Firm] = pda.get_all_provider_firms()
+        firms: list[Firm] = []
 
         self.search_term = self.data.get("search", None)
 
@@ -74,18 +74,22 @@ class ProviderListForm(BaseForm):
             firms = []
         # If an empty search is submitted we show all providers
         elif self.search_term == "":
-            pass
+            firms = pda.get_all_provider_firms()
         else:
-            # Here we need to clean up the search terms to remove % and make sure it doesnt break responses
-            search_lower = normalize_for_search(self.search_term).lower()
-            firms = [
-                firm
-                for firm in firms
-                if (
-                    search_lower in normalize_for_search(firm.firm_name).lower()
-                    or search_lower in normalize_for_search(str(firm.firm_id)).lower()
-                )
-            ]
+            firms = pda.search_provider_firms(self.search_term)
+
+            # Fallback to local filtering when backend search returns no matches.
+            if not firms:
+                all_firms = pda.get_all_provider_firms()
+                search_lower = normalize_for_search(self.search_term).lower()
+                firms = [
+                    firm
+                    for firm in all_firms
+                    if (
+                        search_lower in normalize_for_search(firm.firm_name).lower()
+                        or search_lower in normalize_for_search(str(firm.firm_id)).lower()
+                    )
+                ]
 
         self.page = self.data.get("page", 1)
         self.num_results = len(firms)

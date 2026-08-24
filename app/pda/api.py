@@ -488,12 +488,23 @@ class ProviderDataApi:
         if not isinstance(item, dict):
             return {}
 
+        raw_sort_code = item.get("sortCode")
+        sort_code_digits = "".join(re.findall(r"\d", str(raw_sort_code or "")))
+        if len(sort_code_digits) >= 6:
+            normalized_sort_code = sort_code_digits[:6]
+        elif 0 < len(sort_code_digits) < 6:
+            normalized_sort_code = sort_code_digits.zfill(6)
+        else:
+            normalized_sort_code = "000000"
+
         if "bankAccountId" in item or "accountNumber" in item and "bankAccountName" in item:
-            return item
+            normalized_item = item.copy()
+            normalized_item["sortCode"] = normalized_sort_code
+            return normalized_item
 
         account_number = item.get("accountNumber")
         account_name = item.get("accountName") or "Unknown account"
-        sort_code = item.get("sortCode") or "000000"
+        sort_code = normalized_sort_code
         primary_flag = item.get("primaryFlag")
         if isinstance(primary_flag, bool):
             primary_flag = "Y" if primary_flag else "N"
@@ -952,21 +963,59 @@ class ProviderDataApi:
 
         return False
 
-    def get_provider_office(self, office_code: str) -> Office | None:
+    def search_provider_firms(self, search_term: str) -> List[Firm]:
+        """Search providers by name using backend filtering when available."""
+        if not search_term or not isinstance(search_term, str):
+            return []
+
+        response = self.get("/provider-firms", params={"name": search_term})
+        raw_data = self._handle_response(response, [])
+        if not raw_data:
+            return []
+
+        try:
+            firms = self._extract_collection(raw_data, ["firms", "providerFirms"])
+            normalized_firms = []
+            for firm_data in firms:
+                unwrapped = firm_data.get("firm") if isinstance(firm_data, dict) and "firm" in firm_data else firm_data
+                normalized_firms.append(Firm(**self._normalize_firm_data(unwrapped)))
+            return normalized_firms
+        except ValidationError as e:
+            self.logger.error(f"Invalid firms data from API search for term {search_term}: {e}")
+            raise PDAError(f"Invalid firms data: {e}")
+
+    def get_provider_office(self, office_code: str, firm_id: int | None = None) -> Office | None:
         """
         Get details for a specific provider office.
 
         Args:
             office_code: The office code
+            firm_id: Optional provider firm ID used for OpenAPI-first lookup
 
         Returns:
             Office model instance, or None if not found
         """
         if not office_code or not isinstance(office_code, str):
             raise ValueError("office_code must be a non-empty string")
+        if firm_id is not None and (not isinstance(firm_id, int) or firm_id <= 0):
+            raise ValueError("firm_id must be a positive integer")
 
-        response = self.get(f"/provider-offices/{office_code}")
-        raw_data = self._handle_response(response, None)
+        raw_data = None
+
+        if firm_id is not None:
+            response = self.get(f"/provider-firms/{firm_id}/offices/{office_code}")
+            raw_data = self._handle_response(response, None)
+            if raw_data is None:
+                self.logger.warning(
+                    "OpenAPI office detail lookup returned no data for firm %s office %s; falling back to provider-firms-offices search.",
+                    firm_id,
+                    office_code,
+                )
+        else:
+            self.logger.warning(
+                "Office lookup called without firm_id for office %s; using provider-firms-offices search.",
+                office_code,
+            )
 
         if raw_data is None:
             fallback_response = self.get("/provider-firms-offices", params={"officeCode": office_code, "pageSize": 1})
@@ -975,6 +1024,11 @@ class ProviderDataApi:
             raw_data = offices[0] if offices else None
 
         if raw_data is None:
+            self.logger.warning(
+                "No office data found for office %s%s after PDA-R2 fallbacks.",
+                office_code,
+                f" (firm {firm_id})" if firm_id is not None else "",
+            )
             return None
 
         try:
@@ -999,16 +1053,21 @@ class ProviderDataApi:
         if not isinstance(firm_id, int) or firm_id <= 0:
             raise ValueError("firm_id must be a positive integer")
 
-        response = self.get(f"/provider-firms/{firm_id}/provider-offices")
+        response = self.get(f"/provider-firms/{firm_id}/offices")
         raw_data = self._handle_response(response, [])
 
         offices_data = self._extract_collection(raw_data, ["offices"])
         if not offices_data:
-            fallback_response = self.get(f"/provider-firms/{firm_id}/offices")
-            fallback_data = self._handle_response(fallback_response, [])
-            offices_data = self._extract_collection(fallback_data, ["offices"])
+            self.logger.warning(
+                "OpenAPI office list lookup returned no data for firm %s.",
+                firm_id,
+            )
 
         if not offices_data:
+            self.logger.warning(
+                "No offices found for firm %s.",
+                firm_id,
+            )
             return []
 
         try:
@@ -1187,7 +1246,7 @@ class ProviderDataApi:
         mapped_payment_method = payment_method_lookup.get(payment_method.strip().lower(), payment_method)
 
         self.patch_office(firm_id, office_code, {"paymentMethod": mapped_payment_method})
-        office = self.get_provider_office(office_code)
+        office = self.get_provider_office(office_code, firm_id=firm_id)
         if not office:
             raise PDAError(f"Office {office_code} not found for firm {firm_id}")
         return office
@@ -1220,7 +1279,7 @@ class ProviderDataApi:
         if not managers:
             return []
 
-        office = self.get_provider_office(office_code)
+        office = self.get_provider_office(office_code, firm_id=firm_id)
         vendor_site_id = office.firm_office_id if office and office.firm_office_id > 0 else 1
 
         contacts: List[Contact] = []
@@ -1281,7 +1340,7 @@ class ProviderDataApi:
             raise PDAError("Create liaison manager response did not include a liaison manager GUID")
 
         created_contact = self.get_liaison_manager(liaison_manager_guid)
-        office = self.get_provider_office(office_code)
+        office = self.get_provider_office(office_code, firm_id=firm_id)
         if office and office.firm_office_id > 0:
             created_contact = created_contact.model_copy(update={"vendor_site_id": office.firm_office_id})
         return created_contact
@@ -1353,7 +1412,7 @@ class ProviderDataApi:
 
     def update_office_contact_details(self, firm_id, firm_office_code, payload):
         self.patch_office(firm_id, firm_office_code, payload)
-        office = self.get_provider_office(firm_office_code)
+        office = self.get_provider_office(firm_office_code, firm_id=firm_id)
         if not office:
             raise PDAError(f"Office {firm_office_code} not found for firm {firm_id}")
         return office
@@ -1437,7 +1496,7 @@ class ProviderDataApi:
         Returns: Office
         """
         self.patch_office(firm_id, office_code, data)
-        office = self.get_provider_office(office_code)
+        office = self.get_provider_office(office_code, firm_id=firm_id)
         if not office:
             raise PDAError(f"Office {office_code} not found for firm {firm_id}")
         return office
@@ -1457,7 +1516,7 @@ class ProviderDataApi:
             payload["intervenedFlag"] = payload["intervenedDate"] is not None
             payload["intervenedChangeDate"] = payload["intervenedDate"]
         self.patch_office(firm_id, office_code, payload)
-        office = self.get_provider_office(office_code)
+        office = self.get_provider_office(office_code, firm_id=firm_id)
         if not office:
             raise PDAError(f"Office {office_code} not found for firm {firm_id}")
         return office
@@ -1517,7 +1576,7 @@ class ProviderDataApi:
             if bool_value is not None:
                 payload["debtRecoveryFlag"] = bool_value
         self.patch_office(firm_id, office_code, payload)
-        office = self.get_provider_office(office_code)
+        office = self.get_provider_office(office_code, firm_id=firm_id)
         if not office:
             raise PDAError(f"Office {office_code} not found for firm {firm_id}")
         return office
@@ -1538,7 +1597,7 @@ class ProviderDataApi:
             if bool_value is not None:
                 payload["holdAllPaymentsFlag"] = bool_value
         self.patch_office(firm_id, office_code, payload)
-        office = self.get_provider_office(office_code)
+        office = self.get_provider_office(office_code, firm_id=firm_id)
         if not office:
             raise PDAError(f"Office {office_code} not found for firm {firm_id}")
         return office

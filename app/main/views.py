@@ -3,6 +3,7 @@ from typing import Dict, List, Literal, NoReturn
 
 from flask import abort, current_app, flash, redirect, render_template, request, url_for
 from flask.views import MethodView
+from markupsafe import escape
 
 from app.components.tables import DataTable, SummaryList, TableStructureItem
 from app.main.forms import firm_name_html, get_firm_statuses
@@ -301,7 +302,67 @@ class ViewProvider(MethodView):
             except ProviderDataApiHttpError as e:
                 provider_name = session.get("new_provider", {}).get("firm_name", "this provider")
                 if e.status_code == 409:
-                    flash(f"<b>{provider_name} already exists.</b> Change the provider name and try again.", "error")
+                    add_provider_url = url_for("main.add_parent_provider")
+                    conflict_detail = (e.detail or "").strip()
+                    detail_lower = conflict_detail.lower()
+                    duplicate_markers = ("already exists", "duplicate")
+                    duplicate_name_markers = ("provider", "firm", "name")
+                    is_duplicate_name_conflict = any(marker in detail_lower for marker in duplicate_markers) and any(
+                        marker in detail_lower for marker in duplicate_name_markers
+                    )
+
+                    if is_duplicate_name_conflict:
+                        conflict_html = (
+                            f"<b>{escape(provider_name)} already exists.</b> "
+                            "Change the provider name and try again. "
+                            f"<a class='govuk-link' href='{add_provider_url}'>Return to Add parent provider</a>."
+                        )
+                    elif conflict_detail:
+                        conflict_html = (
+                            "<b>Unable to create provider due to a data conflict.</b> "
+                            f"{escape(conflict_detail)} "
+                            "Check the details and try again. "
+                            f"<a class='govuk-link' href='{add_provider_url}'>Return to Add parent provider</a>."
+                        )
+                    else:
+                        conflict_html = (
+                            "<b>Unable to create provider due to a data conflict.</b> "
+                            "Check the details and try again. "
+                            f"<a class='govuk-link' href='{add_provider_url}'>Return to Add parent provider</a>."
+                        )
+
+                    logger.warning(
+                        "Provider create conflict (409): detail=%s response_data=%s",
+                        e.detail,
+                        e.response_data,
+                    )
+                    flash(
+                        {
+                            "html": conflict_html,
+                        },
+                        "error",
+                    )
+
+                    # Name conflicts can only be resolved on the first add-provider step.
+                    # Drop the in-progress draft so users can restart with a new provider name.
+                    for key in [
+                        "new_provider",
+                        "new_head_office",
+                        "new_head_office_bank_account",
+                        "new_liaison_manager",
+                    ]:
+                        session.pop(key, None)
+                    return redirect(url_for("main.add_parent_provider"))
+
+                logger.warning(
+                    "Provider create failed (status=%s): detail=%s response_data=%s",
+                    e.status_code,
+                    e.detail,
+                    e.response_data,
+                )
+
+                if e.detail:
+                    flash(f"Unable to create provider with the configured backend. {escape(e.detail)}", "error")
                 else:
                     flash("Unable to create provider with the configured backend", "error")
 
