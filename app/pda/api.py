@@ -10,25 +10,7 @@ from urllib3 import Retry
 
 from app.constants import FirmType, YesNo
 from app.models import BankAccount, Contact, Firm, Office
-from app.pda.errors import ProviderDataApiError, ProviderDataApiHttpError
-
-
-class PDAError(ProviderDataApiError):
-    """Base exception for Provider Data API errors."""
-
-    pass
-
-
-class PDAConnectionError(PDAError):
-    """Raised when unable to connect to the Provider Data API."""
-
-    pass
-
-
-class PDACapabilityError(PDAError):
-    """Raised when an operation is not currently supported by the configured Provider Data API."""
-
-    pass
+from app.pda.errors import PDACapabilityError, PDAConnectionError, PDAError, ProviderDataApiHttpError
 
 
 class ProviderDataApi:
