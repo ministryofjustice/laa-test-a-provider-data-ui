@@ -196,8 +196,8 @@ def get_sorted_contacts(firm: Firm, office: Office = None) -> List[Contact]:
         return []
 
     # Sort contacts: primary first, then others
-    primary_contacts = [c for c in contacts if c.primary == "Y"]
-    other_contacts = [c for c in contacts if c.primary != "Y"]
+    primary_contacts = [c for c in contacts if c.inactive_date is None]
+    other_contacts = [c for c in contacts if c.inactive_date is not None]
 
     # Previous contacts ordered by inactive_date first, then creation_date
     other_contacts.sort(
@@ -275,7 +275,7 @@ def get_contact_tables(
             "classes": f"liaison-manager-card liaison-manager-card-primary-{contact.primary.lower()}",
         }
 
-        if contact.primary == "Y" and include_change_link:
+        if (contact.primary or contact.inactive_date is None) and include_change_link:
             if changing_office:
                 action_url = url_for("main.add_new_office_liaison_manager", firm=firm, office=head_office)
             else:
@@ -294,7 +294,7 @@ def get_contact_tables(
         contact_table.add_row("Telephone number", contact.telephone_number)
         contact_table.add_row("Email address", contact.email_address)
         contact_table.add_row("Website", contact.website)
-        contact_table.add_row("Active from", contact.creation_date, format_date)
+        contact_table.add_row("Active from", contact.active_from, format_date)
 
         if contact.inactive_date:
             contact_table.add_row("Active to", contact.inactive_date, format_date)
