@@ -13,6 +13,7 @@ from app.constants import (
     YES_NO_CHOICES,
 )
 from app.main.forms import BaseBankAccountForm, BaseForm
+from app.pda.errors import ProviderDataApiError
 from app.utils.formatting import normalize_for_search
 from app.validators import (
     ValidateCompaniesHouseNumber,
@@ -362,7 +363,12 @@ class AssignContractManagerForm(BaseForm):
     def __init__(self, search_term=None, page=1, selected_value=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.contract_managers = self.get_contract_managers()
+        self.contract_manager_load_error = None
+        try:
+            self.contract_managers = self.get_contract_managers()
+        except ProviderDataApiError:
+            self.contract_managers = []
+            self.contract_manager_load_error = "Unable to load contract managers with the configured backend"
 
         # Set search field data
         self.search_term = search_term
@@ -374,7 +380,9 @@ class AssignContractManagerForm(BaseForm):
         if self.search_term:
             search_lower = normalize_for_search(self.search_term)
             filtered_managers = [
-                manager for manager in self.contract_managers if search_lower in normalize_for_search(manager["name"])
+                manager
+                for manager in self.contract_managers
+                if search_lower in normalize_for_search(self.get_contract_manager_name(manager))
             ]
 
         self.page = page
@@ -386,6 +394,11 @@ class AssignContractManagerForm(BaseForm):
         end_id = self.contract_managers_shown_per_page * (self.page - 1) + self.contract_managers_shown_per_page
 
         filtered_managers = filtered_managers[start_id:end_id]
+        manager_rows = [
+            {"guid": self.get_contract_manager_guid(manager), "name": self.get_contract_manager_name(manager)}
+            for manager in filtered_managers
+            if self.get_contract_manager_guid(manager)
+        ]
 
         # Create RadioDataTable for contract managers
         table_structure: list[TableStructureItem] = [
@@ -393,7 +406,7 @@ class AssignContractManagerForm(BaseForm):
         ]
         self.contract_manager_table = RadioDataTable(
             structure=table_structure,
-            data=filtered_managers,
+            data=manager_rows,
             radio_field_name="contract_manager",
             radio_value_key="guid",
         )
@@ -405,10 +418,41 @@ class AssignContractManagerForm(BaseForm):
         pda = current_app.extensions["pda"]
         return pda.get_list_of_contract_manager_names()
 
+    @staticmethod
+    def get_contract_manager_guid(manager):
+        if isinstance(manager, dict):
+            return manager.get("guid")
+        return getattr(manager, "guid", None)
+
+    @staticmethod
+    def get_contract_manager_name(manager):
+        if isinstance(manager, dict):
+            return manager.get("name") or manager.get("contractManagerId") or "Unknown contract manager"
+        return (
+            getattr(manager, "display_name", None)
+            or getattr(manager, "contract_manager_id", None)
+            or "Unknown contract manager"
+        )
+
+    def find_contract_manager_by_name(self, name: str | None):
+        if not name:
+            return None
+        target = normalize_for_search(name)
+        return next(
+            (
+                manager
+                for manager in self.contract_managers
+                if normalize_for_search(self.get_contract_manager_name(manager)) == target
+            ),
+            None,
+        )
+
     def get_contract_manager_by_guid(self, guid: str | None):
         if not guid:
             return None
-        return next((manager for manager in self.contract_managers if manager.get("guid") == guid), None)
+        return next(
+            (manager for manager in self.contract_managers if self.get_contract_manager_guid(manager) == guid), None
+        )
 
 
 class AddBarristerDetailsForm(BaseForm):

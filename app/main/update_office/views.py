@@ -359,13 +359,19 @@ class ChangeContractManagerFormView(BaseFormView):
                     (
                         item
                         for item in pda.get_list_of_contract_manager_names()
-                        if item.get("guid") == contract_manager_guid
+                        if (item.get("guid") if isinstance(item, dict) else getattr(item, "guid", None))
+                        == contract_manager_guid
                     ),
                     None,
                 )
                 if not manager:
                     raise ProviderDataApiError("Selected contract manager was not found")
-                pda.patch_office(firm.firm_id, office.firm_office_code, {"contractManager": manager["name"]})
+                manager_name = (
+                    manager.get("name")
+                    if isinstance(manager, dict)
+                    else getattr(manager, "display_name", None) or getattr(manager, "contract_manager_id", None)
+                )
+                pda.patch_office(firm.firm_id, office.firm_office_code, {"contractManager": manager_name})
         except ProviderDataApiError as e:
             logger.error(f"{e.__class__.__name__} whilst changing contract manager on firm {firm} office {office}: {e}")
             return False
@@ -374,7 +380,7 @@ class ChangeContractManagerFormView(BaseFormView):
     def form_valid(self, form) -> Response:
         contract_manager_guid = form.data.get("contract_manager")
         selected_manager = form.get_contract_manager_by_guid(contract_manager_guid)
-        display_name = selected_manager.get("name") if selected_manager else contract_manager_guid
+        display_name = form.get_contract_manager_name(selected_manager) if selected_manager else contract_manager_guid
         if self.change_contract_manager(contract_manager_guid, form.firm, form.office):
             # Flash success
             flash(
@@ -388,16 +394,15 @@ class ChangeContractManagerFormView(BaseFormView):
 
     def skip_form(self, form) -> Response:
         # Set contract manager to be default
-        default_manager = next(
-            (manager for manager in form.contract_managers if manager.get("name") == DEFAULT_CONTRACT_MANAGER_NAME),
-            None,
-        )
+        default_manager = form.find_contract_manager_by_name(DEFAULT_CONTRACT_MANAGER_NAME)
         contract_manager = DEFAULT_CONTRACT_MANAGER_NAME
         value_changed = (
             contract_manager != form.office.contract_manager
             and form.office.contract_manager not in STATUS_CONTRACT_MANAGER_NAMES
         )
-        if default_manager and self.change_contract_manager(default_manager.get("guid"), form.firm, form.office):
+        if default_manager and self.change_contract_manager(
+            form.get_contract_manager_guid(default_manager), form.firm, form.office
+        ):
             if value_changed:
                 flash(
                     f"<b>Contract manager for {form.office.firm_office_code} removed.</b>",
@@ -426,12 +431,11 @@ class ChangeContractManagerFormView(BaseFormView):
         search_term = request.args.get("search", "").strip()
         page = int(request.args.get("page", 1))
         form = self.get_form_class()(firm, office, search_term=search_term, page=page)
+        if form.contract_manager_load_error:
+            flash(form.contract_manager_load_error, "error")
         if selected_contract_manager:
-            selected_manager = next(
-                (manager for manager in form.contract_managers if manager.get("name") == selected_contract_manager),
-                None,
-            )
-            form.selected_value = selected_manager.get("guid") if selected_manager else None
+            selected_manager = form.find_contract_manager_by_name(selected_contract_manager)
+            form.selected_value = form.get_contract_manager_guid(selected_manager) if selected_manager else None
 
         if search_term:
             form.search.validate(form)
@@ -442,6 +446,10 @@ class ChangeContractManagerFormView(BaseFormView):
         search_term = request.args.get("search", "").strip()
         page = int(request.args.get("page", 1))
         form = self.get_form_class()(firm, office, search_term=search_term, page=page)
+
+        if form.contract_manager_load_error:
+            flash(form.contract_manager_load_error, "error")
+            return self.form_invalid(form, **kwargs)
 
         if form.skip.data:
             return self.skip_form(form)

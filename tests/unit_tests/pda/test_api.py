@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from app.models import Contact, Firm, Office
+from app.models import Contact, ContractManager, Firm, Office
 from app.pda.api import PDAConnectionError, PDAError, ProviderDataApi
 from app.pda.errors import ProviderDataApiHttpError
 
@@ -544,7 +544,16 @@ class TestProviderDataApi:
         result = initialized_client.get_list_of_contract_manager_names()
 
         initialized_client.get.assert_called_once_with("/provider-contract-managers")
-        assert result == [{"guid": "cm-guid-001", "contractManagerId": "CM001", "name": "Alice Johnson"}]
+        assert result == [
+            ContractManager(guid="cm-guid-001", contractManagerId="CM001", firstName="Alice", lastName="Johnson")
+        ]
+
+    def test_get_list_of_contract_manager_names_raises_typed_error_on_invalid_payload(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(return_value={"data": {"content": ["invalid-item"]}})
+
+        with pytest.raises(PDAError, match="Unable to load contract managers with the configured backend"):
+            initialized_client.get_list_of_contract_manager_names()
 
     def test_assign_contract_manager_to_office_posts_guid_then_hydrates(self, initialized_client):
         initialized_client.post = Mock(return_value=Mock(status_code=201))

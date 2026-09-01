@@ -3,8 +3,10 @@ from unittest.mock import Mock, patch
 from flask import get_flashed_messages, session, url_for
 
 from app.forms import BaseForm
+from app.main.add_a_new_provider.forms import AssignContractManagerForm
+from app.main.add_a_new_provider.views import AssignContractManagerFormView
 from app.main.views import ViewProvider
-from app.pda.errors import ProviderDataApiHttpError
+from app.pda.errors import ProviderDataApiError, ProviderDataApiHttpError
 from app.views import BaseFormView
 
 
@@ -336,3 +338,27 @@ class TestViewProviderRecovery:
                     "Unable to create provider with the configured backend. contractManager must be provided",
                 )
             ]
+
+
+class TestAssignContractManagerRecovery:
+    def test_assign_contract_manager_get_shows_user_facing_error_when_load_fails(self, app):
+        with app.test_request_context("/assign-contract-manager"):
+            session["new_provider"] = {
+                "firm_name": "Test LSP",
+                "firm_type": "Legal Services Provider",
+            }
+            session["new_head_office"] = {"address_line_1": "123 Test Street"}
+
+            view = AssignContractManagerFormView(form_class=AssignContractManagerForm)
+            app.extensions["pda"].get_list_of_contract_manager_names = Mock(
+                side_effect=ProviderDataApiError("Unable to load contract managers with the configured backend")
+            )
+
+            with (
+                patch("app.main.add_a_new_provider.views.render_template", return_value="rendered"),
+            ):
+                response = view.get(context={})
+
+            messages = get_flashed_messages(with_categories=True)
+            assert ("error", "Unable to load contract managers with the configured backend") in messages
+            assert response == "rendered"
