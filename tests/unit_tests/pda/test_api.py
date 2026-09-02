@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from app.models import Contact, Firm, Office
+from app.models import Contact, ContractManager, Firm, Office
 from app.pda.api import PDAConnectionError, PDAError, ProviderDataApi
 from app.pda.errors import ProviderDataApiHttpError
 
@@ -295,6 +295,39 @@ class TestProviderDataApi:
             },
         )
 
+    def test_create_provider_firm_uses_default_contract_manager_flag(self, initialized_client):
+        initialized_client.post = Mock(return_value=Mock(status_code=201))
+        initialized_client.patch = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(return_value={"data": {"providerFirmNumber": "3856"}})
+        initialized_client.get_provider_firm = Mock(
+            return_value=Firm(
+                firmId=3856,
+                firmNumber="3856",
+                firmName="TEST FIRM",
+                firmType="Legal Services Provider",
+                constitutionalStatus="Limited Company",
+            )
+        )
+        firm = Firm(firmName="TEST FIRM", firmType="Legal Services Provider", constitutionalStatus="Limited Company")
+        office = Office(addressLine1="1 Test Way", city="Leeds", postCode="LS1 1AA", paymentMethod="Cheque")
+        liaison_manager = Contact(
+            vendorSiteId=1,
+            firstName="Temp",
+            lastName="Office",
+            emailAddress="temp.office@example.com",
+            telephoneNumber="01134960000",
+        )
+
+        initialized_client.create_provider_firm(
+            firm,
+            office=office,
+            liaison_manager=liaison_manager,
+            use_default_contract_manager=True,
+        )
+
+        payload = initialized_client.post.call_args.kwargs["json"]
+        assert payload["legalServicesProvider"]["contractManager"] == {"useDefaultContractManager": True}
+
     def test_create_provider_firm_patches_lsp_optional_fields_after_create(self, initialized_client):
         initialized_client.post = Mock(return_value=Mock(status_code=201))
         initialized_client.patch = Mock(return_value=Mock(status_code=200))
@@ -544,7 +577,16 @@ class TestProviderDataApi:
         result = initialized_client.get_list_of_contract_manager_names()
 
         initialized_client.get.assert_called_once_with("/provider-contract-managers")
-        assert result == [{"guid": "cm-guid-001", "contractManagerId": "CM001", "name": "Alice Johnson"}]
+        assert result == [
+            ContractManager(guid="cm-guid-001", contractManagerId="CM001", firstName="Alice", lastName="Johnson")
+        ]
+
+    def test_get_list_of_contract_manager_names_raises_typed_error_on_invalid_payload(self, initialized_client):
+        initialized_client.get = Mock(return_value=Mock(status_code=200))
+        initialized_client._handle_response = Mock(return_value={"data": {"content": ["invalid-item"]}})
+
+        with pytest.raises(PDAError, match="Unable to load contract managers with the configured backend"):
+            initialized_client.get_list_of_contract_manager_names()
 
     def test_assign_contract_manager_to_office_posts_guid_then_hydrates(self, initialized_client):
         initialized_client.post = Mock(return_value=Mock(status_code=201))

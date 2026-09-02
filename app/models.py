@@ -229,3 +229,25 @@ class Contact(BaseModel):
     def firm_office_id(self) -> int:
         """Convenience property to access vendor_site_id as firm_office_id."""
         return self.vendor_site_id
+
+
+class ContractManager(BaseModel):
+    """Contract Manager model returned by PDA-R2 endpoints."""
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        str_strip_whitespace=True,
+        validate_assignment=True,
+        extra="ignore",
+    )
+
+    guid: str = Field(min_length=1)
+    contract_manager_id: str = Field(alias="contractManagerId", min_length=1)
+    first_name: str = Field(alias="firstName", min_length=1)
+    last_name: str = Field(alias="lastName", min_length=1)
+    linked_flag: bool | None = Field(alias="linkedFlag", default=None)
+
+    @property
+    def display_name(self) -> str:
+        full_name = " ".join(part for part in [self.first_name, self.last_name] if part).strip()
+        return full_name or self.contract_manager_id or "Unknown contract manager"

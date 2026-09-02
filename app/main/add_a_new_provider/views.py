@@ -1,6 +1,6 @@
 from typing import Any
 
-from flask import Response, abort, current_app, redirect, render_template, request, session, url_for
+from flask import Response, abort, current_app, flash, redirect, render_template, request, session, url_for
 
 from app.constants import DEFAULT_CONTRACT_MANAGER_NAME, PARENT_FIRM_TYPE_CHOICES
 from app.forms import BaseForm
@@ -302,23 +302,21 @@ class AssignContractManagerFormView(BaseFormView):
         selected_manager = form.get_contract_manager_by_guid(form.data.get("contract_manager"))
         session.get("new_head_office").update(
             {
-                "contract_manager": selected_manager.get("name")
+                "contract_manager": form.get_contract_manager_name(selected_manager)
                 if selected_manager
                 else form.data.get("contract_manager"),
-                "contract_manager_guid": selected_manager.get("guid") if selected_manager else None,
+                "contract_manager_guid": form.get_contract_manager_guid(selected_manager) if selected_manager else None,
+                "use_default_contract_manager": False,
             }
         )
         return super().form_valid(form)
 
     def skip_form(self, form):
-        default_manager = next(
-            (manager for manager in form.contract_managers if manager.get("name") == DEFAULT_CONTRACT_MANAGER_NAME),
-            None,
-        )
         session.get("new_head_office").update(
             {
                 "contract_manager": DEFAULT_CONTRACT_MANAGER_NAME,
-                "contract_manager_guid": default_manager.get("guid") if default_manager else None,
+                "contract_manager_guid": None,
+                "use_default_contract_manager": True,
             }
         )
         return super().form_valid(form)
@@ -342,6 +340,9 @@ class AssignContractManagerFormView(BaseFormView):
         page = int(request.args.get("page", 1))
         form = self.get_form_class()(search_term=search_term, page=page)
 
+        if form.contract_manager_load_error:
+            flash(form.contract_manager_load_error, "error")
+
         if search_term:
             form.search.validate(form)
 
@@ -357,6 +358,10 @@ class AssignContractManagerFormView(BaseFormView):
         search_term = request.args.get("search", "").strip()
         page = int(request.args.get("page", 1))
         form = self.get_form_class()(search_term=search_term, page=page)
+
+        if form.contract_manager_load_error:
+            flash(form.contract_manager_load_error, "error")
+            return self.form_invalid(form, **kwargs)
 
         if form.skip.data:
             return self.skip_form(form)
