@@ -2,6 +2,7 @@ from unittest.mock import Mock, patch
 
 from flask import get_flashed_messages, session, url_for
 
+from app.constants import DEFAULT_CONTRACT_MANAGER_NAME
 from app.forms import BaseForm
 from app.main.add_a_new_provider.forms import AssignContractManagerForm
 from app.main.add_a_new_provider.views import AssignContractManagerFormView
@@ -362,3 +363,21 @@ class TestAssignContractManagerRecovery:
             messages = get_flashed_messages(with_categories=True)
             assert ("error", "Unable to load contract managers with the configured backend") in messages
             assert response == "rendered"
+
+    def test_assign_contract_manager_skip_sets_default_manager_flag(self, app):
+        with app.test_request_context("/assign-contract-manager"):
+            session["new_provider"] = {
+                "firm_name": "Test LSP",
+                "firm_type": "Legal Services Provider",
+            }
+            session["new_head_office"] = {"address_line_1": "123 Test Street"}
+
+            view = AssignContractManagerFormView(form_class=AssignContractManagerForm)
+            form = Mock()
+
+            response = view.skip_form(form)
+
+            assert response.status_code == 302
+            assert session["new_head_office"]["contract_manager"] == DEFAULT_CONTRACT_MANAGER_NAME
+            assert session["new_head_office"]["contract_manager_guid"] is None
+            assert session["new_head_office"]["use_default_contract_manager"] is True

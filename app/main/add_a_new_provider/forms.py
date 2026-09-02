@@ -227,7 +227,7 @@ class BankAccountForm(BaseBankAccountForm):
             return
 
         pda = current_app.extensions.get("pda")
-        if not pda or not hasattr(pda, "get_all_bank_accounts"):
+        if not pda or not hasattr(pda, "bank_account_exists"):
             return
 
         sort_code = self._digits_only(self.sort_code.data)
@@ -237,16 +237,11 @@ class BankAccountForm(BaseBankAccountForm):
             return
 
         try:
-            existing_accounts = pda.get_all_bank_accounts()
-        except Exception:
+            if pda.bank_account_exists(sort_code=sort_code, account_number=account_number):
+                raise ValidationError("This bank account already exists. Enter a different sort code or account number")
+        except ProviderDataApiError:
             # Do not block progression on transient lookup failures.
             return
-
-        for account in existing_accounts:
-            existing_sort = self._digits_only(getattr(account, "sort_code", None))
-            existing_number = self._digits_only(getattr(account, "account_number", None))
-            if sort_code == existing_sort and account_number == existing_number:
-                raise ValidationError("This bank account already exists. Enter a different sort code or account number")
 
     skip_button = SubmitField(
         "Cheque payment: Skip this step", widget=GovSubmitInput(classes="govuk-button--secondary govuk-!-margin-left-2")

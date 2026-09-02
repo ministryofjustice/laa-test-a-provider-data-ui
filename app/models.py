@@ -241,10 +241,10 @@ class ContractManager(BaseModel):
         extra="ignore",
     )
 
-    guid: str | None = Field(default=None)
-    contract_manager_id: str | None = Field(alias="contractManagerId", default=None)
-    first_name: str | None = Field(alias="firstName", default=None)
-    last_name: str | None = Field(alias="lastName", default=None)
+    guid: str = Field(min_length=1)
+    contract_manager_id: str = Field(alias="contractManagerId", min_length=1)
+    first_name: str = Field(alias="firstName", min_length=1)
+    last_name: str = Field(alias="lastName", min_length=1)
     linked_flag: bool | None = Field(alias="linkedFlag", default=None)
 
     @property

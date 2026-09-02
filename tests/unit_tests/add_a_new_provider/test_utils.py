@@ -6,7 +6,7 @@ from werkzeug.datastructures import MultiDict
 
 from app.main.add_a_new_provider.forms import AddProviderForm, BankAccountForm, LiaisonManagerForm
 from app.main.utils import add_new_provider, create_provider_from_session
-from app.models import BankAccount, Firm
+from app.models import Firm
 from app.pda.api import ProviderDataApi
 from app.pda.errors import ProviderDataApiHttpError
 from app.pda.mock_api import MockProviderDataApi
@@ -77,6 +77,7 @@ class TestAddNewProvider:
                 liaison_manager=None,
                 bank_account=None,
                 contract_manager_guid=None,
+                use_default_contract_manager=False,
             )
             assert result.firm_id == 123
 
@@ -135,19 +136,7 @@ class TestAddNewProvider:
     def test_bank_account_form_blocks_duplicate_sort_code_and_account_number(self, app):
         with app.test_request_context():
             pda = app.extensions["pda"]
-            pda.get_all_bank_accounts = Mock(
-                return_value=[
-                    BankAccount(
-                        bankAccountId=1,
-                        vendorSiteId=1,
-                        bankName="Test Bank",
-                        bankBranchName="Main",
-                        sortCode="03029" + "9",
-                        accountNumber="1243567",
-                        bankAccountName="Existing Account",
-                    )
-                ]
-            )
+            pda.bank_account_exists = Mock(return_value=True)
 
             form = BankAccountForm(
                 meta={"csrf": False},
@@ -168,19 +157,7 @@ class TestAddNewProvider:
     def test_bank_account_form_allows_unique_sort_code_and_account_number(self, app):
         with app.test_request_context():
             pda = app.extensions["pda"]
-            pda.get_all_bank_accounts = Mock(
-                return_value=[
-                    BankAccount(
-                        bankAccountId=1,
-                        vendorSiteId=1,
-                        bankName="Test Bank",
-                        bankBranchName="Main",
-                        sortCode="03029" + "9",
-                        accountNumber="1243567",
-                        bankAccountName="Existing Account",
-                    )
-                ]
-            )
+            pda.bank_account_exists = Mock(return_value=False)
 
             form = BankAccountForm(
                 meta={"csrf": False},
@@ -293,9 +270,55 @@ class TestCreateProviderFromSession:
             assert kwargs["office"].address_line_1 == "123 Test Street"
             assert kwargs["liaison_manager"].first_name == "Test"
             assert kwargs["contract_manager_guid"] == "cm-guid-001"
+            assert kwargs["use_default_contract_manager"] is False
             assert "new_provider" not in session
             assert "new_head_office" not in session
             assert "new_liaison_manager" not in session
+
+    def test_create_provider_from_session_non_mock_uses_default_contract_manager_flag(self, app):
+        with app.test_request_context():
+            real_pda = ProviderDataApi()
+            real_pda.create_provider_firm = Mock(
+                return_value=Firm(
+                    firmName="Nested Test Firm",
+                    firmType="Legal Services Provider",
+                    constitutionalStatus="Limited Company",
+                    firmId=999,
+                    firmNumber="999",
+                )
+            )
+            app.extensions["pda"] = real_pda
+
+            session["new_provider"] = {
+                "firm_name": "Nested Test Firm",
+                "firm_type": "Legal Services Provider",
+                "constitutional_status": "Limited Company",
+            }
+            session["new_head_office"] = {
+                "address_line_1": "123 Test Street",
+                "city": "Test City",
+                "postcode": "TE1 5ST",
+                "telephone_number": "01234567890",
+                "email_address": "test@example.com",
+                "payment_method": "Cheque",
+                "use_default_contract_manager": True,
+            }
+            session["new_liaison_manager"] = {
+                "first_name": "Test",
+                "last_name": "User",
+                "email_address": "test.user@example.com",
+                "telephone_number": "01234567890",
+                "job_title": "Liaison manager",
+                "primary": "Y",
+            }
+
+            result = create_provider_from_session()
+
+            assert result.firm_id == 999
+            real_pda.create_provider_firm.assert_called_once()
+            _, kwargs = real_pda.create_provider_firm.call_args
+            assert kwargs["contract_manager_guid"] is None
+            assert kwargs["use_default_contract_manager"] is True
 
     def test_create_provider_from_session_non_mock_failure_preserves_session(self, app):
         with app.test_request_context():

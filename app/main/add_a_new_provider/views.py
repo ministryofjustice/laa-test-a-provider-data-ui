@@ -306,16 +306,17 @@ class AssignContractManagerFormView(BaseFormView):
                 if selected_manager
                 else form.data.get("contract_manager"),
                 "contract_manager_guid": form.get_contract_manager_guid(selected_manager) if selected_manager else None,
+                "use_default_contract_manager": False,
             }
         )
         return super().form_valid(form)
 
     def skip_form(self, form):
-        default_manager = form.find_contract_manager_by_name(DEFAULT_CONTRACT_MANAGER_NAME)
         session.get("new_head_office").update(
             {
                 "contract_manager": DEFAULT_CONTRACT_MANAGER_NAME,
-                "contract_manager_guid": form.get_contract_manager_guid(default_manager) if default_manager else None,
+                "contract_manager_guid": None,
+                "use_default_contract_manager": True,
             }
         )
         return super().form_valid(form)

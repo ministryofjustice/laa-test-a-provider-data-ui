@@ -560,6 +560,7 @@ class ProviderDataApi:
         liaison_manager: Contact | None = None,
         bank_account: BankAccount | None = None,
         contract_manager_guid: str | None = None,
+        use_default_contract_manager: bool = False,
     ) -> Dict[str, Any]:
         if not isinstance(firm, Firm):
             raise ValueError("firm must be a Firm instance")
@@ -604,7 +605,9 @@ class ProviderDataApi:
                     "emailAddress": liaison_manager.email_address,
                     "telephoneNumber": liaison_manager.telephone_number,
                 }
-                if contract_manager_guid:
+                if use_default_contract_manager:
+                    legal_services_provider["contractManager"] = {"useDefaultContractManager": True}
+                elif contract_manager_guid:
                     legal_services_provider["contractManager"] = {"contractManagerGUID": contract_manager_guid}
                 else:
                     legal_services_provider["contractManager"] = None
@@ -712,6 +715,7 @@ class ProviderDataApi:
         liaison_manager: Contact | None = None,
         bank_account: BankAccount | None = None,
         contract_manager_guid: str | None = None,
+        use_default_contract_manager: bool = False,
     ) -> Firm:
         payload = self._build_provider_create_payload(
             firm,
@@ -719,6 +723,7 @@ class ProviderDataApi:
             liaison_manager=liaison_manager,
             bank_account=bank_account,
             contract_manager_guid=contract_manager_guid,
+            use_default_contract_manager=use_default_contract_manager,
         )
         response = self.post("/provider-firms", json=payload)
         raw_data = self._handle_response(response, {})
@@ -1452,6 +1457,10 @@ class ProviderDataApi:
         Returns: List[BankAccount]
         """
         self._unsupported("Getting all bank accounts is currently not supported by the real Provider Data API")
+
+    def bank_account_exists(self, sort_code: str, account_number: str) -> bool:
+        """Return whether a bank account exists, when backend supports efficient lookups."""
+        self._unsupported("Checking if a bank account exists is not yet supported by the real Provider Data API")
 
     def update_provider_firm_name(self, firm_id: int, new_firm_name: str) -> Firm:
         """
