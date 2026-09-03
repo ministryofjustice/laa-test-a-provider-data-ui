@@ -9,7 +9,7 @@ from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
 from app.constants import FirmType, YesNo
-from app.models import BankAccount, Contact, Firm, Office
+from app.models import BankAccount, Contact, ContractManager, Firm, Office
 from app.pda.errors import PDACapabilityError, PDAConnectionError, PDAError, ProviderDataApiHttpError
 
 
@@ -405,20 +405,37 @@ class ProviderDataApi:
 
         return {k: v for k, v in normalized.items() if v is not None}
 
-    def _get_primary_contract_manager_for_office(self, firm_id: int | str, office_code: str) -> Dict[str, Any] | None:
+    def _parse_contract_managers(self, raw_data: Any, endpoint: str) -> List[ContractManager]:
+        managers_data = self._extract_collection(raw_data, ["contractManagers"])
+        managers: List[ContractManager] = []
+
+        for item in managers_data:
+            if not isinstance(item, dict):
+                self.logger.error("Invalid contract manager payload item from %s: %r", endpoint, item)
+                raise PDAError("Unable to load contract managers with the configured backend")
+
+            try:
+                managers.append(ContractManager(**item))
+            except ValidationError as e:
+                self.logger.error("Failed to validate contract manager payload from %s: %s", endpoint, e)
+                raise PDAError("Unable to load contract managers with the configured backend") from e
+
+        return managers
+
+    def _get_primary_contract_manager_for_office(self, firm_id: int | str, office_code: str) -> ContractManager | None:
         """Get the currently linked contract manager for an office, when available."""
-        response = self.get(f"/provider-firms/{firm_id}/offices/{office_code}/contract-managers")
+        endpoint = f"/provider-firms/{firm_id}/offices/{office_code}/contract-managers"
+        response = self.get(endpoint)
         raw_data = self._handle_response(response, [])
-        managers = self._extract_collection(raw_data, ["contractManagers"])
+        managers = self._parse_contract_managers(raw_data, endpoint)
         if not managers:
             return None
 
-        linked_manager = next((m for m in managers if isinstance(m, dict) and m.get("linkedFlag") is True), None)
+        linked_manager = next((m for m in managers if m.linked_flag is True), None)
         if linked_manager:
             return linked_manager
 
-        first_manager = managers[0]
-        return first_manager if isinstance(first_manager, dict) else None
+        return managers[0]
 
     def _hydrate_office_contract_manager(self, firm_id: int | str, office: Office | None) -> Office | None:
         """Backfill contract manager details from the dedicated endpoint when office payload omits them."""
@@ -446,19 +463,17 @@ class ProviderDataApi:
         if not manager:
             return office
 
-        display_name = " ".join(part for part in [manager.get("firstName"), manager.get("lastName")] if part).strip()
-        if not display_name:
-            display_name = manager.get("contractManagerId")
+        display_name = manager.display_name
 
         updates = {}
         if display_name and (not office.contract_manager or office.contract_manager == office.contract_manager_id):
             updates["contract_manager"] = display_name
 
-        if manager.get("guid") and not office.contract_manager_guid:
-            updates["contract_manager_guid"] = manager.get("guid")
+        if manager.guid and not office.contract_manager_guid:
+            updates["contract_manager_guid"] = manager.guid
 
-        if manager.get("contractManagerId") and not office.contract_manager_id:
-            updates["contract_manager_id"] = manager.get("contractManagerId")
+        if manager.contract_manager_id and not office.contract_manager_id:
+            updates["contract_manager_id"] = manager.contract_manager_id
 
         if not updates:
             return office
@@ -527,6 +542,7 @@ class ProviderDataApi:
         liaison_manager: Contact | None = None,
         bank_account: BankAccount | None = None,
         contract_manager_guid: str | None = None,
+        use_default_contract_manager: bool = False,
     ) -> Dict[str, Any]:
         if not isinstance(firm, Firm):
             raise ValueError("firm must be a Firm instance")
@@ -571,7 +587,9 @@ class ProviderDataApi:
                     "emailAddress": liaison_manager.email_address,
                     "telephoneNumber": liaison_manager.telephone_number,
                 }
-                if contract_manager_guid:
+                if use_default_contract_manager:
+                    legal_services_provider["contractManager"] = {"useDefaultContractManager": True}
+                elif contract_manager_guid:
                     legal_services_provider["contractManager"] = {"contractManagerGUID": contract_manager_guid}
                 else:
                     legal_services_provider["contractManager"] = None
@@ -679,6 +697,7 @@ class ProviderDataApi:
         liaison_manager: Contact | None = None,
         bank_account: BankAccount | None = None,
         contract_manager_guid: str | None = None,
+        use_default_contract_manager: bool = False,
     ) -> Firm:
         payload = self._build_provider_create_payload(
             firm,
@@ -686,6 +705,7 @@ class ProviderDataApi:
             liaison_manager=liaison_manager,
             bank_account=bank_account,
             contract_manager_guid=contract_manager_guid,
+            use_default_contract_manager=use_default_contract_manager,
         )
         response = self.post("/provider-firms", json=payload)
         raw_data = self._handle_response(response, {})
@@ -740,12 +760,12 @@ class ProviderDataApi:
         normalized = (payment_method or "CHECK").strip().lower()
         return mapping.get(normalized, payment_method or "CHECK")
 
-    def _find_contract_manager_by_name(self, name: str) -> Dict[str, Any] | None:
+    def _find_contract_manager_by_name(self, name: str) -> ContractManager | None:
         if not name:
             return None
         normalized_name = name.strip().lower()
         for manager in self.get_list_of_contract_manager_names():
-            if manager.get("name", "").strip().lower() == normalized_name:
+            if manager.display_name.strip().lower() == normalized_name:
                 return manager
         return None
 
@@ -759,7 +779,7 @@ class ProviderDataApi:
             contract_manager_guid = office.contract_manager_guid
         if not contract_manager_guid and office.contract_manager:
             manager = self._find_contract_manager_by_name(office.contract_manager)
-            contract_manager_guid = manager.get("guid") if manager else None
+            contract_manager_guid = manager.guid if manager else None
 
         payload: Dict[str, Any] = {
             "address": {
@@ -864,7 +884,6 @@ class ProviderDataApi:
             jobTitle="Liaison manager",
             primary="Y",
             activeFrom=payload.get("activeDateFrom"),
-            inactiveDate=payload.get("activeDateTo"),
         )
 
     def get_provider_firm(self, firm_id: int | str) -> Firm | None:
@@ -1268,7 +1287,6 @@ class ProviderDataApi:
         contacts: List[Contact] = []
         for manager in managers:
             try:
-                self.logger.info("Fetching contact details for liaison manager %v", manager)
                 contacts.append(
                     Contact(
                         contact_id=manager.get("guid"),
@@ -1346,7 +1364,6 @@ class ProviderDataApi:
         Raises:
             NotImplementedError: This functionality is not yet supported by the real API
         """
-        # self._unsupported("Updating contacts is not yet supported by the real Provider Data API")
         if not isinstance(contact.contact_id, str) or not contact.contact_id:
             raise ValueError("contact_id must be a non-empty string")
         if not email or not isinstance(email, str):
@@ -1464,6 +1481,10 @@ class ProviderDataApi:
         """
         self._unsupported("Getting all bank accounts is currently not supported by the real Provider Data API")
 
+    def bank_account_exists(self, sort_code: str, account_number: str) -> bool:
+        """Return whether a bank account exists, when backend supports efficient lookups."""
+        self._unsupported("Checking if a bank account exists is not yet supported by the real Provider Data API")
+
     def update_provider_firm_name(self, firm_id: int, new_firm_name: str) -> Firm:
         """
         Update an existing firm name.
@@ -1547,26 +1568,12 @@ class ProviderDataApi:
             raise PDAError(f"Office {office_code} not found for firm {firm_id}")
         return office
 
-    def get_list_of_contract_manager_names(self):
+    def get_list_of_contract_manager_names(self) -> List[ContractManager]:
         """Get a list of all known contract managers."""
-        response = self.get("/provider-contract-managers")
+        endpoint = "/provider-contract-managers"
+        response = self.get(endpoint)
         raw_data = self._handle_response(response, [])
-        managers = self._extract_collection(raw_data, ["contractManagers"])
-
-        results = []
-        for manager in managers:
-            first_name = manager.get("firstName") or ""
-            last_name = manager.get("lastName") or ""
-            results.append(
-                {
-                    "guid": manager.get("guid"),
-                    "contractManagerId": manager.get("contractManagerId"),
-                    "name": " ".join(part for part in [first_name, last_name] if part).strip()
-                    or manager.get("contractManagerId")
-                    or "Unknown contract manager",
-                }
-            )
-        return results
+        return self._parse_contract_managers(raw_data, endpoint)
 
     def assign_contract_manager_to_office(self, firm_id: int, office_code: str, contract_manager_guid: str) -> Office:
         if not isinstance(firm_id, int) or firm_id <= 0:

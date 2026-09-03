@@ -56,6 +56,7 @@ def add_new_provider(
     liaison_manager: Contact | None = None,
     bank_account: BankAccount | None = None,
     contract_manager_guid: str | None = None,
+    use_default_contract_manager: bool = False,
 ) -> Firm:
     """Adds a new provider to the configured PDA adapter."""
 
@@ -69,6 +70,7 @@ def add_new_provider(
         liaison_manager=liaison_manager,
         bank_account=bank_account,
         contract_manager_guid=contract_manager_guid,
+        use_default_contract_manager=use_default_contract_manager,
     )
 
     if show_success_message:
@@ -247,16 +249,19 @@ def create_provider_from_session() -> Firm | None:
             del session["new_provider"]
             return firm
 
-        office = Office(**office_data)
+        office_payload = {k: v for k, v in office_data.items() if k != "use_default_contract_manager"}
+        office = Office(**office_payload)
         liaison_manager = Contact(**liaison_manager_data) if liaison_manager_data else None
         bank_account = BankAccount(**bank_account_data) if bank_account_data else None
         contract_manager_guid = office_data.get("contract_manager_guid")
+        use_default_contract_manager = bool(office_data.get("use_default_contract_manager"))
         firm = add_new_provider(
             Firm(**firm_data),
             office=office,
             liaison_manager=liaison_manager,
             bank_account=bank_account,
             contract_manager_guid=contract_manager_guid,
+            use_default_contract_manager=use_default_contract_manager,
         )
 
         del session["new_provider"]
@@ -281,9 +286,10 @@ def create_provider_from_session() -> Firm | None:
         liaison_manager_data = session.get("new_liaison_manager")
         liaison_manager = Contact(**liaison_manager_data) if liaison_manager_data else None
         contract_manager_guid = office_data.get("contract_manager_guid")
+        office_payload = {k: v for k, v in office_data.items() if k != "use_default_contract_manager"}
 
         new_office = add_new_office(
-            Office(**office_data),
+            Office(**office_payload),
             firm_id=firm.firm_id,
             show_success_message=False,
             liaison_manager=liaison_manager,

@@ -466,6 +466,7 @@ class MockProviderDataApi:
         liaison_manager: Contact | None = None,
         bank_account: BankAccount | None = None,
         contract_manager_guid: str | None = None,
+        use_default_contract_manager: bool = False,
     ) -> Firm:
         """
         Create a new provider firm in the mock data.
@@ -869,6 +870,22 @@ class MockProviderDataApi:
         for account in self._mock_data["bank_accounts"]:
             bank_accounts.append(BankAccount(**account))
         return bank_accounts
+
+    @staticmethod
+    def _digits_only(value: str | None) -> str:
+        return re.sub(r"\D", "", value or "")
+
+    def bank_account_exists(self, sort_code: str, account_number: str) -> bool:
+        normalized_sort = self._digits_only(sort_code)
+        normalized_number = self._digits_only(account_number)
+        for account in self._mock_data["bank_accounts"]:
+            account_sort = self._digits_only(str(account.get("sortCode") or account.get("sort_code") or ""))
+            account_number_value = self._digits_only(
+                str(account.get("accountNumber") or account.get("account_number") or "")
+            )
+            if normalized_sort == account_sort and normalized_number == account_number_value:
+                return True
+        return False
 
     def update_provider_firm_name(self, firm_id: int, new_firm_name: str) -> Firm:
         firm_data = self._find_firm_data(firm_id)
