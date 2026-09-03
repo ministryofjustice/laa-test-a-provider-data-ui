@@ -1,7 +1,7 @@
 # Created by https://www.toptal.com/developers/gitignore/api/git,osx,venv,flask,linux,macos,python,windows,certificates,visualstudio,jetbrains+all,visualstudiocode
 # Edit at https://www.toptal.com/developers/gitignore?templates=git,osx,venv,flask,linux,macos,python,windows,certificates,visualstudio,jetbrains+all,visualstudiocode
 
- e2e/test-results/
+e2e/test-results/
 ### GOV.UK Frontend ###
 app/static/fonts*
 app/static/govuk-frontend*
