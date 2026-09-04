@@ -128,7 +128,7 @@ pytest tests/unit_tests
 
 To run functional/non-functional tests:
 
-```shell
+```shell 
 pytest tests/functional_tests
 ```
 

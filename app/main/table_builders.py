@@ -294,7 +294,8 @@ def get_contact_tables(
         contact_table.add_row("Telephone number", contact.telephone_number)
         contact_table.add_row("Email address", contact.email_address)
         contact_table.add_row("Website", contact.website)
-        contact_table.add_row("Active from", contact.active_from, format_date)
+        active_from_value = contact.active_from or contact.creation_date
+        contact_table.add_row("Active from", active_from_value, format_date)
 
         if contact.inactive_date:
             contact_table.add_row("Active to", contact.inactive_date, format_date)

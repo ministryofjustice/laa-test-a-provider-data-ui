@@ -737,14 +737,27 @@ class MockProviderDataApi:
 
         office_id = office_data.get("firmOfficeId")
 
-        # Generate a new contact ID
-        existing_ids = [contact_data.get("contactId", 0) for contact_data in self._mock_data["contacts"]]
-        new_contact_id = max(existing_ids, default=0) + 1
+        # Generate a numeric contact ID from mixed fixture formats (e.g., 12, "12", "guid12").
+        existing_ids: List[int] = []
+        for contact_data in self._mock_data["contacts"]:
+            raw_id = contact_data.get("contactId")
+            if isinstance(raw_id, int):
+                existing_ids.append(raw_id)
+                continue
+            if isinstance(raw_id, str):
+                digits = "".join(re.findall(r"\d+", raw_id))
+                if digits:
+                    existing_ids.append(int(digits))
+
+        # Contact.contact_id is modelled as str, so keep IDs string-typed.
+        new_contact_id = str(max(existing_ids, default=0) + 1)
 
         # Set the vendor_site_id to the office ID and creation_date to today in ISO format
         updates = {"vendor_site_id": office_id, "contact_id": new_contact_id}
         if not contact.creation_date:
             updates["creation_date"] = date.today()
+        if not contact.active_from:
+            updates["active_from"] = date.today().isoformat()
 
         updated_contact = contact.model_copy(update=updates)
 

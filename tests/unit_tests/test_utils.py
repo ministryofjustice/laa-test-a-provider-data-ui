@@ -244,7 +244,7 @@ class TestChangeLiaisonManager:
                 "offices": [{"_firmId": 1, "firmOfficeCode": "1A001L", "firmOfficeId": 101, "headOffice": "N/A"}],
                 "contacts": [
                     {
-                        "contactId": 1,
+                        "contactId": "guid1",
                         "vendorSiteId": 101,
                         "firstName": "John",
                         "lastName": "Smith",
@@ -344,7 +344,7 @@ class TestChangeLiaisonManager:
                 "offices": [{"_firmId": 1, "firmOfficeCode": "1A001L", "firmOfficeId": 101, "headOffice": "N/A"}],
                 "contacts": [
                     {
-                        "contactId": 1,
+                        "contactId": "guid1",
                         "vendorSiteId": 101,
                         "firstName": "John",
                         "lastName": "Smith",
@@ -430,7 +430,7 @@ class TestChangeLiaisonManager:
                 ],
                 "contacts": [
                     {
-                        "contactId": 1,
+                        "contactId": "guid1",
                         "vendorSiteId": 101,
                         "firstName": "Old",
                         "lastName": "Manager",

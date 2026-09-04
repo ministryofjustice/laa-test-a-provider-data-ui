@@ -875,6 +875,7 @@ class ProviderDataApi:
             raise PDAError("Invalid liaison manager response payload")
 
         return Contact(
+            contactId=liaison_manager_guid,
             vendorSiteId=1,
             firstName=payload.get("firstName") or "",
             lastName=payload.get("lastName") or "",
