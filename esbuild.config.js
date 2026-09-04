@@ -1,6 +1,5 @@
-const esbuild = require('esbuild');
-const { sassPlugin } = require('esbuild-sass-plugin');
-
+import esbuild from 'esbuild';
+import { sassPlugin } from 'esbuild-sass-plugin';
 
 const isProduction = process.env.MAPD_ENVIRONMENT === 'production';
 

@@ -1,4 +1,4 @@
-const { Before, After, setDefaultTimeout } = require('@cucumber/cucumber');
+import { Before, After, setDefaultTimeout } from '@cucumber/cucumber';
 
 setDefaultTimeout(30_000);
 
@@ -17,6 +17,7 @@ After(async function (scenario) {
   }
 
   // Closing the context saves the video file.
+  await this.page?.close();
   await this.context?.close();
   await this.browser?.close();
 });
