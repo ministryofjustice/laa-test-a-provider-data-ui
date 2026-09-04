@@ -1,7 +1,7 @@
 {
   "contacts": [
     {
-      "contactId": 1,
+      "contactId": "guid1",
       "vendorSiteId": 101,
       "firstName": "Sarah",
       "lastName": "Johnson",
@@ -13,7 +13,7 @@
       "creationDate": "2024-01-15"
     },
     {
-      "contactId": 2,
+      "contactId": "guid2",
       "vendorSiteId": 101,
       "firstName": "David",
       "lastName": "Smith",
@@ -26,7 +26,7 @@
       "inactiveDate": "2024-06-20"
     },
     {
-      "contactId": 3,
+      "contactId": "guid3",
       "vendorSiteId": 101,
       "firstName": "Alice",
       "lastName": "Brown",
@@ -39,7 +39,7 @@
       "inactiveDate": "2024-12-01"
     },
     {
-      "contactId": 4,
+      "contactId": "guid4",
       "vendorSiteId": 102,
       "firstName": "Michael",
       "lastName": "Thompson",
@@ -51,7 +51,7 @@
       "creationDate": "2023-11-05"
     },
     {
-      "contactId": 5,
+      "contactId": "guid5",
       "vendorSiteId": 103,
       "firstName": "Emma",
       "lastName": "Brown",
@@ -63,7 +63,7 @@
       "creationDate": "2024-02-28"
     },
     {
-      "contactId": 6,
+      "contactId": "guid6",
       "vendorSiteId": 103,
       "firstName": "Sophie",
       "lastName": "Williams",
@@ -76,7 +76,7 @@
       "inactiveDate": "2025-01-15"
     },
     {
-      "contactId": 7,
+      "contactId": "guid7",
       "vendorSiteId": 104,
       "firstName": "James",
       "lastName": "Davis",
@@ -88,7 +88,7 @@
       "creationDate": "2023-09-18"
     },
     {
-      "contactId": 8,
+      "contactId": "guid8",
       "vendorSiteId": 105,
       "firstName": "Rachel",
       "lastName": "Wilson",
@@ -100,7 +100,7 @@
       "creationDate": "2024-04-07"
     },
     {
-      "contactId": 9,
+      "contactId": "guid9",
       "vendorSiteId": 201,
       "firstName": "Robert",
       "lastName": "MacLeod",
@@ -112,7 +112,7 @@
       "creationDate": "2023-12-20"
     },
     {
-      "contactId": 10,
+      "contactId": "guid10",
       "vendorSiteId": 401,
       "firstName": "Alan",
       "lastName": "Davies",
@@ -124,7 +124,7 @@
       "creationDate": "2025-09-25"
     },
     {
-      "contactId": 11,
+      "contactId": "guid11",
       "vendorSiteId": 1305,
       "firstName": "Robert",
       "lastName": "MacLeod",
@@ -136,7 +136,7 @@
       "creationDate": "2023-12-20"
     },
     {
-      "contactId": 12,
+      "contactId": "guid12",
       "vendorSiteId": 1448,
       "firstName": "Robert",
       "lastName": "MacLeod",

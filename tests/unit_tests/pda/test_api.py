@@ -4,8 +4,8 @@ import pytest
 import requests
 
 from app.models import Contact, ContractManager, Firm, Office
-from app.pda.api import PDAConnectionError, PDAError, ProviderDataApi
-from app.pda.errors import ProviderDataApiHttpError
+from app.pda.api import ProviderDataApi
+from app.pda.errors import PDAConnectionError, PDAError, ProviderDataApiHttpError
 
 
 class TestProviderDataApi:

@@ -10,25 +10,7 @@ from urllib3 import Retry
 
 from app.constants import FirmType, YesNo
 from app.models import BankAccount, Contact, ContractManager, Firm, Office
-from app.pda.errors import ProviderDataApiError, ProviderDataApiHttpError
-
-
-class PDAError(ProviderDataApiError):
-    """Base exception for Provider Data API errors."""
-
-    pass
-
-
-class PDAConnectionError(PDAError):
-    """Raised when unable to connect to the Provider Data API."""
-
-    pass
-
-
-class PDACapabilityError(PDAError):
-    """Raised when an operation is not currently supported by the configured Provider Data API."""
-
-    pass
+from app.pda.errors import PDACapabilityError, PDAConnectionError, PDAError, ProviderDataApiHttpError
 
 
 class ProviderDataApi:
@@ -893,6 +875,7 @@ class ProviderDataApi:
             raise PDAError("Invalid liaison manager response payload")
 
         return Contact(
+            contactId=liaison_manager_guid,
             vendorSiteId=1,
             firstName=payload.get("firstName") or "",
             lastName=payload.get("lastName") or "",
@@ -1307,6 +1290,7 @@ class ProviderDataApi:
             try:
                 contacts.append(
                     Contact(
+                        contact_id=manager.get("guid"),
                         vendorSiteId=vendor_site_id,
                         firstName=manager.get("firstName") or "",
                         lastName=manager.get("lastName") or "",
@@ -1316,6 +1300,7 @@ class ProviderDataApi:
                         jobTitle="Liaison manager",
                         primary="Y" if manager.get("linkedFlag", True) else "N",
                         activeFrom=manager.get("activeDateFrom"),
+                        inactiveDate=manager.get("activeDateTo"),
                     )
                 )
             except ValidationError as e:
@@ -1365,7 +1350,7 @@ class ProviderDataApi:
             created_contact = created_contact.model_copy(update={"vendor_site_id": office.firm_office_id})
         return created_contact
 
-    def update_contact(self, firm_id: int, office_code: str, contact: Contact) -> Contact:
+    def update_contact(self, contact: Contact, email: str, telephone: str) -> Contact:
         """
         Update an existing contact.
 
@@ -1380,7 +1365,46 @@ class ProviderDataApi:
         Raises:
             NotImplementedError: This functionality is not yet supported by the real API
         """
-        self._unsupported("Updating contacts is not yet supported by the real Provider Data API")
+        if not isinstance(contact.contact_id, str) or not contact.contact_id:
+            raise ValueError("contact_id must be a non-empty string")
+        if not email or not isinstance(email, str):
+            raise ValueError("email must be a non-empty string")
+        if not telephone or not isinstance(telephone, str):
+            raise ValueError("telephone must be a non-empty string")
+
+        payload = {
+            "emailAddress": email,
+            "telephoneNumber": telephone,
+        }
+
+        response = self.patch(f"/provider-liaison-managers/{contact.contact_id}", json=payload)
+
+        raw_data = self._handle_response(response, [])
+        manager = self._extract_collection(raw_data, [])
+        if not manager:
+            return None
+
+        try:
+            self.logger.info("Fetching contact details for liaison manager %v", manager)
+
+            contact = Contact(
+                contact_id=manager.get("guid"),
+                vendorSiteId=contact.vendor_site_id,
+                firstName=manager.get("firstName") or contact.first_name,
+                lastName=manager.get("lastName") or contact.last_name,
+                emailAddress=manager.get("emailAddress") or contact.email_address,
+                telephoneNumber=manager.get("telephoneNumber") or contact.telephone_number,
+                website=None,
+                jobTitle="Liaison manager",
+                primary="Y" if manager.get("linkedFlag", True) else "N",
+                activeFrom=contact.active_from,
+                inactiveDate=contact.inactive_date,
+            )
+
+        except ValidationError as e:
+            self.logger.error(f"Invalid liaison manager {contact.contact_id}: {e}")
+
+        return contact
 
     def patch_provider(self, firm_id: int, fields_to_update: dict):
         response = self.patch(

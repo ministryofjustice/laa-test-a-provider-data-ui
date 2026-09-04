@@ -4,6 +4,24 @@ class ProviderDataApiError(Exception):
     pass
 
 
+class PDAError(ProviderDataApiError):
+    """Base exception for Provider Data API errors."""
+
+    pass
+
+
+class PDAConnectionError(PDAError):
+    """Raised when unable to connect to the Provider Data API."""
+
+    pass
+
+
+class PDACapabilityError(PDAError):
+    """Raised when an operation is not currently supported by the configured Provider Data API."""
+
+    pass
+
+
 class ProviderDataApiHttpError(ProviderDataApiError):
     """HTTP-level error returned by the Provider Data API."""
 
